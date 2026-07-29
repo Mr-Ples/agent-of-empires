@@ -1,5 +1,83 @@
 import type { RepoColor } from "./repoAppearance";
 
+export type IssueSyncStatus =
+  | "fresh"
+  | "stale"
+  | "auth_required"
+  | "rate_limited"
+  | "forbidden"
+  | "not_found"
+  | "network"
+  | "api_failure";
+
+export type IssueSyncFailureKind =
+  | { kind: "auth_required"; interactive: boolean }
+  | { kind: "forbidden" }
+  | { kind: "not_found" }
+  | { kind: "network" }
+  | { kind: "rate_limited" }
+  | { kind: "api_failure" };
+
+export interface IssueSyncMetadata {
+  status: IssueSyncStatus;
+  synced_at: string | null;
+  message: string | null;
+  failure?: IssueSyncFailureKind | null;
+}
+
+export interface IssueLabel {
+  name: string;
+  color: string | null;
+  description: string | null;
+}
+
+export interface PullRequestBadge {
+  url: string;
+  merged_at: string | null;
+}
+
+export interface IssueRecord {
+  issue_ref: string;
+  github_id: number;
+  node_id: string;
+  title: string;
+  body: string | null;
+  excerpt: string | null;
+  state: "open" | "closed";
+  labels: IssueLabel[];
+  assignees: string[];
+  url: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  pull_request: PullRequestBadge | null;
+  sync: IssueSyncMetadata;
+}
+
+export interface WorkItemProjection {
+  issue_ref: string;
+  title: string;
+  state: "open" | "closed";
+  attached_session_id?: string | null;
+  labels: IssueLabel[];
+  url: string;
+  pull_request: PullRequestBadge | null;
+  sync: IssueSyncMetadata;
+  issue: IssueRecord;
+}
+
+export interface WorkItemsResponse {
+  repository: {
+    owner: string;
+    repo: string;
+  };
+  sync: IssueSyncMetadata | null;
+  work_items: {
+    open: WorkItemProjection[];
+    closed: WorkItemProjection[];
+  };
+}
+
 /** Session data returned by the API */
 export interface SessionResponse {
   id: string;

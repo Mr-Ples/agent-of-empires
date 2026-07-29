@@ -11,6 +11,8 @@ use crate::github::{
     IssueSyncMetadata, IssueSyncStatus,
 };
 
+pub const ISSUE_SYNC_CACHE_SUBDIR: &str = "github/issues";
+
 pub type IssueClientFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<GitHubIssuePayload>, IssueSyncFailure>> + Send + 'a>>;
 
@@ -197,6 +199,10 @@ pub trait GitHubIssueClient: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct IssueSyncStore {
     root: PathBuf,
+}
+
+pub fn issue_sync_cache_dir(app_dir: impl Into<PathBuf>) -> PathBuf {
+    app_dir.into().join(ISSUE_SYNC_CACHE_SUBDIR)
 }
 
 impl IssueSyncStore {

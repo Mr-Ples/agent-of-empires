@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
@@ -245,11 +246,19 @@ pub struct WorkItemProjection {
     pub issue_ref: IssueRef,
     pub title: String,
     pub state: WorkItemState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attached_session_id: Option<String>,
     pub labels: Vec<IssueLabel>,
     pub url: String,
     pub pull_request: Option<PullRequestBadge>,
     pub sync: IssueSyncMetadata,
     pub issue: IssueRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkItemListProjection {
+    pub open: Vec<WorkItemProjection>,
+    pub closed: Vec<WorkItemProjection>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,6 +278,7 @@ impl From<IssueRecord> for WorkItemProjection {
             issue_ref: issue.issue_ref.clone(),
             title: issue.title.clone(),
             state,
+            attached_session_id: None,
             labels: issue.labels.clone(),
             url: issue.url.clone(),
             pull_request: issue.pull_request.clone(),
@@ -276,6 +286,29 @@ impl From<IssueRecord> for WorkItemProjection {
             issue,
         }
     }
+}
+
+pub fn project_work_items<'a>(
+    issues: impl IntoIterator<Item = IssueRecord>,
+    attachments: impl IntoIterator<Item = (&'a IssueRef, &'a str)>,
+) -> WorkItemListProjection {
+    let attached_by_issue: HashMap<IssueRef, String> = attachments
+        .into_iter()
+        .map(|(issue_ref, session_id)| (issue_ref.clone(), session_id.to_string()))
+        .collect();
+
+    let mut open = Vec::new();
+    let mut closed = Vec::new();
+    for issue in issues {
+        let mut work_item = WorkItemProjection::from(issue);
+        work_item.attached_session_id = attached_by_issue.get(&work_item.issue_ref).cloned();
+        match work_item.state {
+            WorkItemState::Open => open.push(work_item),
+            WorkItemState::Closed => closed.push(work_item),
+        }
+    }
+
+    WorkItemListProjection { open, closed }
 }
 
 /// GitHub REST issue payload subset normalized into [`IssueRecord`].
@@ -578,6 +611,76 @@ mod tests {
         assert_eq!(
             work_item.issue.sync.message.as_deref(),
             Some("network unavailable")
+        );
+    }
+
+    #[test]
+    fn work_item_list_joins_session_attachments_and_keeps_unattached_rows() {
+        let open_attached = GitHubIssuePayload {
+            number: 12,
+            title: "Attached issue".to_string(),
+            ..issue_payload()
+        }
+        .normalize(
+            "Mr-Ples",
+            "agent-of-empires",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+        let open_unattached = GitHubIssuePayload {
+            id: 1002,
+            node_id: "I_other".to_string(),
+            number: 13,
+            title: "Unattached issue".to_string(),
+            html_url: "https://github.com/Mr-Ples/agent-of-empires/issues/13".to_string(),
+            ..issue_payload()
+        }
+        .normalize(
+            "Mr-Ples",
+            "agent-of-empires",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+        let closed_attached = GitHubIssuePayload {
+            id: 1003,
+            node_id: "I_closed".to_string(),
+            number: 14,
+            title: "Closed attached".to_string(),
+            state: "closed".to_string(),
+            html_url: "https://github.com/Mr-Ples/agent-of-empires/issues/14".to_string(),
+            closed_at: Some(ts("2026-07-03T12:00:00Z")),
+            ..issue_payload()
+        }
+        .normalize(
+            "Mr-Ples",
+            "agent-of-empires",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+
+        let projection = project_work_items(
+            vec![
+                open_attached.clone(),
+                open_unattached.clone(),
+                closed_attached.clone(),
+            ],
+            [
+                (&open_attached.issue_ref, "session-a"),
+                (&closed_attached.issue_ref, "session-c"),
+            ],
+        );
+
+        assert_eq!(projection.open.len(), 2);
+        assert_eq!(projection.closed.len(), 1);
+        assert_eq!(
+            projection.open[0].attached_session_id.as_deref(),
+            Some("session-a")
+        );
+        assert_eq!(projection.open[1].title, "Unattached issue");
+        assert_eq!(projection.open[1].attached_session_id, None);
+        assert_eq!(
+            projection.closed[0].attached_session_id.as_deref(),
+            Some("session-c")
         );
     }
 

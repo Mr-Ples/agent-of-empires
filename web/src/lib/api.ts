@@ -13,6 +13,7 @@ import type {
   CreateSessionRequest,
   ClaudeSessionSummary,
   SettingsFieldDescriptor,
+  WorkItemsResponse,
 } from "./types";
 import type { ConfigOptionDescriptor } from "./acpTypes";
 import { clearDeviceBindingSecret, getOrCreateDeviceBindingSecret } from "./deviceBinding";
@@ -37,6 +38,11 @@ export interface SessionsEnvelope {
 
 export function fetchSessions(): Promise<SessionsEnvelope | null> {
   return fetchJson<SessionsEnvelope>("/api/sessions");
+}
+
+export function fetchWorkItems(owner: string, repo: string): Promise<WorkItemsResponse | null> {
+  const params = new URLSearchParams({ owner, repo });
+  return fetchJson<WorkItemsResponse>(`/api/work-items?${params.toString()}`);
 }
 
 export interface ConversationSearchHit {
