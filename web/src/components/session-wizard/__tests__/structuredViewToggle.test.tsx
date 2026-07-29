@@ -219,4 +219,33 @@ describe("SessionWizard structured_view payload", () => {
       }),
     );
   });
+
+  it("sends issue attachment and context preference from issue-first prefill", async () => {
+    const { getByText, getByRole } = render(
+      <SessionWizard
+        onClose={() => {}}
+        onCreated={() => {}}
+        prefill={{
+          path: "/tmp/proj",
+          tool: "claude",
+          issueRef: "mr-ples/agent-of-empires#17",
+          issueTitle: "Support issue-first session creation",
+        }}
+      />,
+    );
+
+    fireEvent.click(getByText("More options"));
+    fireEvent.click(getByRole("switch", { name: /Issue Context/ }));
+    fireEvent.click(getByText(/Launch session/));
+
+    await waitFor(() => expect(createSession).toHaveBeenCalled());
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "#17 Support issue-first session creation",
+        issue_ref: "mr-ples/agent-of-empires#17",
+        inject_issue_context: false,
+        view: "structured",
+      }),
+    );
+  });
 });

@@ -11,6 +11,8 @@ interface WizardData {
    *  Mirrors the TUI new-session toggle. See #969. */
   attachExisting: boolean;
   baseBranch: string;
+  issueRef?: string;
+  injectIssueContext?: boolean;
   group: string;
   tool: string;
   scratch: boolean;
@@ -175,6 +177,22 @@ export function SessionStep({ data, onChange, embedded = false }: Props) {
 
           {!data.attachExisting && <AdvancedWorktreeOptions data={data} onChange={onChange} />}
         </div>
+      )}
+
+      {typeof data.issueRef === "string" && data.issueRef.length > 0 && (
+        <label
+          className="flex items-center justify-between gap-3 p-3 bg-surface-900 border border-surface-700 rounded-lg mb-5 cursor-pointer"
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('button[role="switch"]')) return;
+            onChange("injectIssueContext", !(data.injectIssueContext ?? true));
+          }}
+        >
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-text-primary">Issue Context</div>
+            <div className="text-xs text-text-dim mt-0.5 leading-snug font-mono truncate">{data.issueRef}</div>
+          </div>
+          <Toggle checked={data.injectIssueContext ?? true} onChange={(v) => onChange("injectIssueContext", v)} />
+        </label>
       )}
 
       <div>

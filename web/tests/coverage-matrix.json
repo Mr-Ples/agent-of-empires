@@ -780,6 +780,18 @@
       ]
     },
     {
+      "id": "wizard.issue-first-prefill",
+      "kind": "vitest",
+      "risk": "medium",
+      "specs": ["src/components/session-wizard/__tests__/structuredViewToggle.test.tsx"],
+      "components": [
+        "web/src/components/session-wizard/SessionWizard.tsx",
+        "web/src/components/session-wizard/steps/SessionStep.tsx",
+        "web/src/components/session-wizard/wizardReducer.ts",
+        "web/src/lib/types.ts"
+      ]
+    },
+    {
       "id": "wizard.multi-repo-stale-base",
       "kind": "live-playwright",
       "risk": "high",

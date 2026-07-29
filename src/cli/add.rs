@@ -239,9 +239,6 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
     // session (`session.tie_workdir_to_name`) can seed its directory leaf from
     // the title and start out aligned (#1927). The path-dependent duplicate
     // check still runs later, once `path` points at the worktree.
-    let storage = Storage::new_unwatched(profile)?;
-    let (instances, _groups) = storage.load_with_groups()?;
-    let final_title = resolve_session_title(&args, &instances)?;
     let issue_ref = args
         .issue_ref
         .as_deref()
@@ -250,6 +247,19 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
         .map(str::parse::<crate::github::IssueRef>)
         .transpose()
         .map_err(|e| anyhow::anyhow!("Invalid --issue-ref: {e}"))?;
+    let cached_issue_record = issue_ref.as_ref().and_then(|issue_ref| {
+        crate::session::get_app_dir()
+            .ok()
+            .and_then(|app_dir| crate::github::load_cached_issue_record(app_dir, issue_ref))
+    });
+    let storage = Storage::new_unwatched(profile)?;
+    let (instances, _groups) = storage.load_with_groups()?;
+    let final_title = resolve_session_title(
+        &args,
+        &instances,
+        issue_ref.as_ref(),
+        cached_issue_record.as_ref(),
+    )?;
     if let Some(issue_ref) = &issue_ref {
         if let Some(holder) = instances
             .iter()
@@ -1251,17 +1261,24 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
 /// `--interactive` mode, which already verified stdin is a terminal.
 /// Resolve the session title string (no path-dependent duplicate check).
 ///
-/// `--title` wins; otherwise the default is the worktree branch name, or a
-/// random civilization name for non-worktree sessions. `--interactive` prompts
+/// `--title` wins; otherwise the default is the worktree branch name, an
+/// issue-derived title, or a random civilization name. `--interactive` prompts
 /// with that default prefilled. Resolved before worktree creation so a tied
 /// session can derive its directory leaf from the title (#1927); the duplicate
 /// check runs later once the worktree path is known.
-fn resolve_session_title(args: &AddArgs, instances: &[Instance]) -> Result<String> {
+fn resolve_session_title(
+    args: &AddArgs,
+    instances: &[Instance],
+    issue_ref: Option<&crate::github::IssueRef>,
+    issue: Option<&crate::github::IssueRecord>,
+) -> Result<String> {
     if let Some(title) = &args.title {
         return Ok(title.trim().to_string());
     }
     let default_title = if let Some(branch) = explicit_worktree_branch(args) {
         branch.to_string()
+    } else if let Some(issue_ref) = issue_ref {
+        crate::github::issue_session_default_title(issue_ref, issue)
     } else {
         let existing_titles: Vec<&str> = instances.iter().map(|i| i.title.as_str()).collect();
         civilizations::generate_random_title(&existing_titles)

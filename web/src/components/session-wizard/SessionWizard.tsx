@@ -92,6 +92,13 @@ function acpDefaultsFor(session: Record<string, unknown> | undefined, tool: stri
   };
 }
 
+function issueTitlePrefill(issueRef: string | undefined, issueTitle: string | undefined): string {
+  const title = issueTitle?.split(/\s+/).join(" ").trim();
+  if (!issueRef || !title) return "";
+  const number = issueRef.match(/#(\d+)$/)?.[1];
+  return number ? `#${number} ${title}` : title;
+}
+
 export interface WizardPrefill {
   path?: string;
   tool?: string;
@@ -105,6 +112,14 @@ export interface WizardPrefill {
    *  `scratch` flag is on, no path is required, worktree controls are
    *  hidden. The single screen is already one Cmd+Enter from launch. */
   scratch?: boolean;
+  /** GitHub Issue attachment for issue-first session creation. */
+  issueRef?: string;
+  /** Issue title from the selected Work Item, used to prefill the normal
+   *  session title field. */
+  issueTitle?: string;
+  /** Defaults true when `issueRef` is set. False keeps the attachment but
+   *  skips the initial Issue Context turn. */
+  injectIssueContext?: boolean;
 }
 
 interface Props {
@@ -124,12 +139,15 @@ export function SessionWizard({ onClose, onCreated, prefill }: Props) {
         sandboxEnabled: prefill.sandboxEnabled ?? false,
         profile: prefill.profile || "",
         group: prefill.group || "",
+        title: issueTitlePrefill(prefill.issueRef, prefill.issueTitle),
         scratch: prefill.scratch ?? false,
         // Scratch mode clears worktree/extra-repos so the submit
         // payload mirrors what the reducer's SET_FIELD arm would emit
         // for a user-triggered scratch toggle. See wizardReducer.ts.
         useWorktree: prefill.scratch ? false : baseInitial.useWorktree,
         extraRepoPaths: prefill.scratch ? [] : baseInitial.extraRepoPaths,
+        issueRef: prefill.issueRef || "",
+        injectIssueContext: prefill.injectIssueContext ?? true,
       }
     : baseInitial;
 
@@ -300,6 +318,8 @@ export function SessionWizard({ onClose, onCreated, prefill }: Props) {
       extra_args: d.extraArgs || undefined,
       command_override: d.commandOverride || undefined,
       custom_instruction: d.customInstruction || undefined,
+      issue_ref: d.issueRef || undefined,
+      inject_issue_context: d.issueRef ? d.injectIssueContext : undefined,
       profile: d.profile || undefined,
       // Structured view runs when the agent is ACP-capable and the user
       // kept the per-session toggle on (default). Capability comes from

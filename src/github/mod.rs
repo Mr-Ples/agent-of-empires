@@ -17,11 +17,13 @@ pub use client::{
 };
 pub use error::{GitHubError, Result};
 pub use issues::{
-    project_work_items, GitHubIssuePayload, IssueAttachmentConflict, IssueCreateRequest,
-    IssueEditRequest, IssueLabel, IssueMutationValidationError, IssueNormalizeError, IssueRecord,
-    IssueRef, IssueRefParseError, IssueState, IssueSyncFailureKind, IssueSyncMetadata,
-    IssueSyncStatus, PullRequestBadge, ValidatedIssueCreateRequest, ValidatedIssueEditRequest,
-    WorkItemListProjection, WorkItemProjection, WorkItemState, DEFAULT_TRIAGE_LABEL,
+    issue_context_prompt, issue_session_default_branch, issue_session_default_title,
+    load_cached_issue_record, project_work_items, GitHubIssuePayload, IssueAttachmentConflict,
+    IssueCreateRequest, IssueEditRequest, IssueLabel, IssueMutationValidationError,
+    IssueNormalizeError, IssueRecord, IssueRef, IssueRefParseError, IssueState,
+    IssueSyncFailureKind, IssueSyncMetadata, IssueSyncStatus, PullRequestBadge,
+    ValidatedIssueCreateRequest, ValidatedIssueEditRequest, WorkItemListProjection,
+    WorkItemProjection, WorkItemState, DEFAULT_TRIAGE_LABEL,
 };
 pub use sync::{
     issue_sync_cache_dir, GitHubIssueClient, IssueMutationError, IssueMutationSnapshot,

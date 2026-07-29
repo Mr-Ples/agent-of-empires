@@ -4472,6 +4472,10 @@ pub struct CreateSessionBody {
     pub custom_instruction: Option<String>,
     #[serde(default)]
     pub issue_ref: Option<String>,
+    /// Controls whether an issue-created structured session receives an
+    /// initial issue context prompt. Defaults on when `issue_ref` is set.
+    #[serde(default)]
+    pub inject_issue_context: Option<bool>,
     pub profile: Option<String>,
     /// How the new session should render: `structured` or `terminal`. The
     /// bundled wizard sends an explicit value (`structured` for ACP-capable
@@ -5102,15 +5106,51 @@ pub async fn create_session(
         }
     };
 
+    let cached_issue_record = issue_ref.as_ref().and_then(|issue_ref| {
+        crate::session::get_app_dir()
+            .ok()
+            .and_then(|app_dir| crate::github::load_cached_issue_record(app_dir, issue_ref))
+    });
+    let title = body.title.or_else(|| {
+        issue_ref.as_ref().map(|issue_ref| {
+            crate::github::issue_session_default_title(issue_ref, cached_issue_record.as_ref())
+        })
+    });
+    let worktree_branch = body
+        .worktree_branch
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty())
+        .or_else(|| {
+            if worktree_enabled {
+                issue_ref
+                    .as_ref()
+                    .map(crate::github::issue_session_default_branch)
+            } else {
+                None
+            }
+        });
+    #[cfg(feature = "serve")]
+    let can_deliver_issue_context = body.view == crate::session::View::Structured;
+    #[cfg(not(feature = "serve"))]
+    let can_deliver_issue_context = false;
+    let pending_initial_turn =
+        if can_deliver_issue_context && body.inject_issue_context.unwrap_or(issue_ref.is_some()) {
+            issue_ref.as_ref().map(|issue_ref| {
+                crate::github::issue_context_prompt(issue_ref, cached_issue_record.as_ref())
+            })
+        } else {
+            None
+        };
+
     let profile = body.profile.unwrap_or_else(|| state.profile.clone());
 
     let spec = crate::server::session_spawn::StructuredSessionSpec {
-        title: body.title,
+        title,
         path: body.path,
         group: body.group,
         tool: body.tool,
         worktree_enabled,
-        worktree_branch: body.worktree_branch,
+        worktree_branch,
         create_new_branch: body.create_new_branch,
         base_branch: body.base_branch,
         sandbox: body.sandbox,
@@ -5129,7 +5169,7 @@ pub async fn create_session(
         // stamps these, through create_structured_session. See #2897.
         created_by_plugin: None,
         plugin_create_idempotency: None,
-        pending_initial_turn: None,
+        pending_initial_turn,
         acp_mode_id: None,
         #[cfg(feature = "serve")]
         view: body.view,

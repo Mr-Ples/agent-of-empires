@@ -70,6 +70,12 @@ export interface WizardData {
    *  the ProjectStep import tab, which also forces `tool: "claude"`,
    *  structured view on, and worktree off. See #2276. */
   importAcpSessionId: string;
+  /** GitHub Issue attachment carried by issue-first creation flows. Empty
+   *  means an ordinary session. */
+  issueRef: string;
+  /** True by default for issue-first structured sessions. Toggling this off
+   *  keeps `issueRef` attached but suppresses the initial issue-context turn. */
+  injectIssueContext: boolean;
   [key: string]: unknown;
 }
 
@@ -141,6 +147,8 @@ export const initialData: WizardData = {
   agentModel: "",
   agentEffort: "",
   importAcpSessionId: "",
+  issueRef: "",
+  injectIssueContext: true,
 };
 
 export function reducer(state: WizardState, action: Action): WizardState {

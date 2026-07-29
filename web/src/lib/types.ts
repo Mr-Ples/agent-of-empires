@@ -588,6 +588,9 @@ export interface CreateSessionRequest {
   custom_instruction?: string;
   /** Optional GitHub Issue attachment, formatted as `owner/repo#number`. */
   issue_ref?: string | null;
+  /** When omitted, issue-created sessions inject cached issue context. Set
+   *  false to keep the attachment without sending issue contents. */
+  inject_issue_context?: boolean;
   profile?: string;
   /** Substrate selection: true → ACP-based acp (Beta),
    *  false → tmux passthrough (legacy). Server defaults to true on

@@ -397,6 +397,76 @@ pub fn project_work_items<'a>(
     WorkItemListProjection { open, closed }
 }
 
+pub fn issue_session_default_title(issue_ref: &IssueRef, issue: Option<&IssueRecord>) -> String {
+    let normalized_title = issue
+        .map(|issue| issue.title.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|title| !title.is_empty());
+    match normalized_title {
+        Some(title) => format!("#{} {title}", issue_ref.number()),
+        None => format!("#{} {}", issue_ref.number(), issue_ref),
+    }
+}
+
+pub fn issue_session_default_branch(issue_ref: &IssueRef) -> String {
+    format!(
+        "issue-{}-{}-{}",
+        issue_ref.owner(),
+        issue_ref.repo(),
+        issue_ref.number()
+    )
+}
+
+pub fn issue_context_prompt(issue_ref: &IssueRef, issue: Option<&IssueRecord>) -> String {
+    let mut lines = vec![
+        "Issue Context".to_string(),
+        String::new(),
+        format!("Issue Ref: {issue_ref}"),
+    ];
+
+    if let Some(issue) = issue {
+        lines.push(format!("Title: {}", issue.title));
+        lines.push(format!("URL: {}", issue.url));
+        if !issue.labels.is_empty() {
+            let labels = issue
+                .labels
+                .iter()
+                .map(|label| label.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("Labels: {labels}"));
+        }
+        if let Some(body) = issue
+            .body
+            .as_deref()
+            .map(str::trim)
+            .filter(|b| !b.is_empty())
+        {
+            lines.push(String::new());
+            lines.push("Body:".to_string());
+            lines.push(body.to_string());
+        }
+    } else {
+        lines.push("Title: unavailable in local issue cache".to_string());
+    }
+
+    lines.join("\n")
+}
+
+pub fn load_cached_issue_record(
+    app_dir: impl Into<std::path::PathBuf>,
+    issue_ref: &IssueRef,
+) -> Option<IssueRecord> {
+    let repository =
+        crate::github::IssueRepository::new(issue_ref.owner(), issue_ref.repo()).ok()?;
+    let store =
+        crate::github::IssueSyncStore::new(crate::github::issue_sync_cache_dir(app_dir.into()));
+    let cache = store.load(&repository).ok().flatten()?;
+    cache
+        .issues
+        .into_iter()
+        .find(|issue| issue.issue_ref == *issue_ref)
+}
+
 /// GitHub REST issue payload subset normalized into [`IssueRecord`].
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubIssuePayload {
@@ -839,6 +909,60 @@ mod tests {
             projection.closed[0].attached_session_id.as_deref(),
             Some("session-c")
         );
+    }
+
+    #[test]
+    fn issue_session_defaults_use_stable_issue_identity() {
+        let record = GitHubIssuePayload {
+            number: 17,
+            title: " Support issue-first session creation\nand attach ".to_string(),
+            html_url: "https://github.com/Mr-Ples/agent-of-empires/issues/17".to_string(),
+            ..issue_payload()
+        }
+        .normalize(
+            "Mr-Ples",
+            "agent-of-empires",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            issue_session_default_title(&record.issue_ref, Some(&record)),
+            "#17 Support issue-first session creation and attach"
+        );
+        assert_eq!(
+            issue_session_default_branch(&record.issue_ref),
+            "issue-mr-ples-agent-of-empires-17"
+        );
+    }
+
+    #[test]
+    fn issue_context_prompt_includes_cached_issue_details() {
+        let record = GitHubIssuePayload {
+            number: 17,
+            title: "Support issue-first session creation".to_string(),
+            body: Some("Acceptance criteria here.".to_string()),
+            labels: vec![GitHubIssueLabelPayload {
+                name: "ready-for-agent".to_string(),
+                color: None,
+                description: None,
+            }],
+            html_url: "https://github.com/Mr-Ples/agent-of-empires/issues/17".to_string(),
+            ..issue_payload()
+        }
+        .normalize(
+            "Mr-Ples",
+            "agent-of-empires",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+
+        let prompt = issue_context_prompt(&record.issue_ref, Some(&record));
+
+        assert!(prompt.contains("Issue Ref: mr-ples/agent-of-empires#17"));
+        assert!(prompt.contains("Title: Support issue-first session creation"));
+        assert!(prompt.contains("Labels: ready-for-agent"));
+        assert!(prompt.contains("Acceptance criteria here."));
     }
 
     #[test]
