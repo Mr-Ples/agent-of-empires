@@ -795,11 +795,19 @@
       "id": "dashboard.work-items-issue-first",
       "kind": "vitest",
       "risk": "medium",
-      "specs": ["src/components/__tests__/WorkItemsPanel.test.tsx"],
+      "specs": [
+        "src/components/__tests__/WorkItemsPanel.test.tsx",
+        "src/components/__tests__/WorkItemsSidebar.test.tsx"
+      ],
       "components": [
         "web/src/components/WorkItemsPanel.tsx",
+        "web/src/components/WorkItemsSidebar.tsx",
+        "web/src/components/IssueDetailsPane.tsx",
+        "web/src/components/WorkspaceSidebar.tsx",
         "web/src/components/Dashboard.tsx",
+        "web/src/hooks/useSidebarMode.ts",
         "web/src/lib/api.ts",
+        "web/src/lib/sidebarMode.ts",
         "web/src/lib/types.ts"
       ]
     },

@@ -18,7 +18,9 @@ import {
   ArrowLeftRight,
   CircleDot,
   CircleStop,
+  FolderPlus,
   Folder,
+  Funnel,
   GitFork,
   Hourglass,
   Layers,
@@ -55,7 +57,14 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ProjectInfo, RepoGroup, SessionResponse, SessionStatus, Workspace } from "../lib/types";
+import type {
+  ProjectInfo,
+  RepoGroup,
+  SessionResponse,
+  SessionStatus,
+  WorkItemProjection,
+  Workspace,
+} from "../lib/types";
 import { ProjectsSection } from "./ProjectsSection";
 import type { SidebarAxis } from "../lib/sidebarAxis";
 import {
@@ -124,6 +133,8 @@ import { SessionGroupModal } from "./SessionGroupModal";
 import { SidebarSortPicker } from "./SidebarSortPicker";
 import { Tooltip } from "./Tooltip";
 import { PluginRowLine } from "./plugin/PluginSlots";
+import { WorkItemsSidebar } from "./WorkItemsSidebar";
+import type { SidebarMode } from "../lib/sidebarMode";
 
 const SIDEBAR_WIDTH_KEY = "aoe-sidebar-width";
 const SUNK_EXPANDED_KEY = "aoe-sidebar-sunk-expanded";
@@ -346,6 +357,14 @@ interface Props {
   onPluginSortChange: (ref: { pluginId: string; entryId: string }) => void;
   axis: SidebarAxis;
   onAxisChange: (axis: SidebarAxis) => void;
+  sidebarMode: SidebarMode;
+  onSidebarModeChange: (mode: SidebarMode) => void;
+  projects: ProjectInfo[];
+  sessions: SessionResponse[];
+  activeProjectPath: string | null;
+  selectedIssueRef: string | null;
+  onSelectIssue: (project: ProjectInfo, item: WorkItemProjection) => void;
+  onCreateFromIssue: (project: ProjectInfo, item: WorkItemProjection) => void;
 }
 
 function bestSession(
@@ -2773,6 +2792,14 @@ export function WorkspaceSidebar({
   onPluginSortChange,
   axis,
   onAxisChange,
+  sidebarMode,
+  onSidebarModeChange,
+  projects,
+  sessions,
+  activeProjectPath,
+  selectedIssueRef,
+  onSelectIssue,
+  onCreateFromIssue,
 }: Props) {
   // Which mobile edge the drawer slides in from (client-local, #2244). Only
   // affects the `fixed` mobile drawer; on desktop the sidebar is `md:static`
@@ -3284,104 +3311,104 @@ export function WorkspaceSidebar({
           rightSide ? "right-0 border-l md:border-l-0 md:border-r" : "left-0 border-r"
         } ${open ? "translate-x-0" : `${rightSide ? "translate-x-full" : "-translate-x-full"} md:hidden`}`}
       >
-        <div className="px-3 pt-3 pb-1 flex items-center">
-          <span data-testid="sidebar-axis-heading" className="text-sm text-text-muted flex-1">
-            {AXIS_HEADING[axis]}
-          </span>
-          <Tooltip text={AXIS_TOOLTIP[axis]}>
-            <button
-              onClick={() => onAxisChange(NEXT_AXIS[axis])}
-              aria-pressed={axis !== "repo"}
-              aria-label={axis === "repo" ? AXIS_ARIA[axis] : `${AXIS_ARIA[axis]}, currently pressed`}
-              data-testid="sidebar-axis-toggle"
-              data-axis={axis}
-              className={`w-8 h-8 flex items-center justify-center cursor-pointer rounded-md transition-colors ${
-                axis !== "repo" ? "text-brand-500" : "text-text-dim hover:text-text-secondary"
-              }`}
-            >
-              <Layers className="h-3.5 w-3.5" />
-            </button>
-          </Tooltip>
-          <SidebarSortPicker
-            sortMode={sortMode}
-            onSortModeChange={onSortModeChange}
-            pluginSorts={pluginSorts}
-            pluginSortRef={pluginSortRef}
-            onPluginSortChange={onPluginSortChange}
-          />
-          {facetSpecs.length > 0 && (
-            <Tooltip text="Plugin facets">
+        <div className="px-3 pt-3 pb-1">
+          <div className="mb-2 grid grid-cols-2 rounded-md border border-surface-700/60 bg-surface-900/50 p-0.5">
+            {(["sessions", "issues"] as const).map((mode) => (
               <button
-                onClick={() => setFacetOpen((o) => !o)}
-                aria-haspopup="true"
-                aria-expanded={facetOpen}
-                aria-label="Plugin facet filters"
-                data-testid="sidebar-facet-toggle"
-                className={`relative w-8 h-8 flex items-center justify-center cursor-pointer rounded-md transition-colors ${
-                  activeFacets.length > 0 || facetOpen ? "text-brand-500" : "text-text-dim hover:text-text-secondary"
+                key={mode}
+                type="button"
+                onClick={() => onSidebarModeChange(mode)}
+                aria-pressed={sidebarMode === mode}
+                data-testid={`sidebar-mode-${mode}`}
+                className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                  sidebarMode === mode
+                    ? "bg-surface-700 text-text-primary"
+                    : "text-text-muted hover:bg-surface-800 hover:text-text-secondary"
                 }`}
               >
-                <ListFilter className="h-3.5 w-3.5" />
-                {activeFacets.length > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-500" aria-hidden />
-                )}
+                {mode === "sessions" ? "Sessions" : "Issues"}
               </button>
-            </Tooltip>
+            ))}
+          </div>
+          {sidebarMode === "sessions" && (
+            <div className="flex items-center">
+              <span data-testid="sidebar-axis-heading" className="text-sm text-text-muted flex-1">
+                {AXIS_HEADING[axis]}
+              </span>
+              <Tooltip text={AXIS_TOOLTIP[axis]}>
+                <button
+                  onClick={() => onAxisChange(NEXT_AXIS[axis])}
+                  aria-pressed={axis !== "repo"}
+                  aria-label={axis === "repo" ? AXIS_ARIA[axis] : `${AXIS_ARIA[axis]}, currently pressed`}
+                  data-testid="sidebar-axis-toggle"
+                  data-axis={axis}
+                  className={`w-8 h-8 flex items-center justify-center cursor-pointer rounded-md transition-colors ${
+                    axis !== "repo" ? "text-brand-500" : "text-text-dim hover:text-text-secondary"
+                  }`}
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <SidebarSortPicker
+                sortMode={sortMode}
+                onSortModeChange={onSortModeChange}
+                pluginSorts={pluginSorts}
+                pluginSortRef={pluginSortRef}
+                onPluginSortChange={onPluginSortChange}
+              />
+              {facetSpecs.length > 0 && (
+                <Tooltip text="Plugin facets">
+                  <button
+                    onClick={() => setFacetOpen((o) => !o)}
+                    aria-haspopup="true"
+                    aria-expanded={facetOpen}
+                    aria-label="Plugin facet filters"
+                    data-testid="sidebar-facet-toggle"
+                    className={`relative w-8 h-8 flex items-center justify-center cursor-pointer rounded-md transition-colors ${
+                      activeFacets.length > 0 || facetOpen
+                        ? "text-brand-500"
+                        : "text-text-dim hover:text-text-secondary"
+                    }`}
+                  >
+                    <ListFilter className="h-3.5 w-3.5" />
+                    {activeFacets.length > 0 && (
+                      <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-brand-500" aria-hidden />
+                    )}
+                  </button>
+                </Tooltip>
+              )}
+              <Tooltip text="Filter">
+                <button
+                  onClick={toggleFilter}
+                  className={`w-8 h-8 flex items-center justify-center cursor-pointer rounded-md transition-colors ${
+                    filterOpen ? "text-text-secondary" : "text-text-dim hover:text-text-secondary"
+                  }`}
+                  aria-label="Filter sessions"
+                >
+                  <Funnel className="h-3.5 w-3.5" />
+                </button>
+              </Tooltip>
+              <Tooltip text={offline ? OFFLINE_TITLE : "New project session"}>
+                <button
+                  onClick={onNew}
+                  disabled={offline}
+                  className="w-8 h-8 flex items-center justify-center text-text-muted hover:text-text-secondary hover:bg-surface-800 cursor-pointer rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted disabled:hover:bg-transparent"
+                  aria-label="New project session"
+                >
+                  <FolderPlus className="h-4 w-4" />
+                </button>
+              </Tooltip>
+              <button
+                onClick={onToggle}
+                className="md:hidden w-8 h-8 flex items-center justify-center text-text-dim hover:text-text-secondary cursor-pointer rounded-md hover:bg-surface-800 ml-1"
+              >
+                &times;
+              </button>
+            </div>
           )}
-          <Tooltip text="Filter">
-            <button
-              onClick={toggleFilter}
-              className={`w-8 h-8 flex items-center justify-center cursor-pointer rounded-md transition-colors ${
-                filterOpen ? "text-text-secondary" : "text-text-dim hover:text-text-secondary"
-              }`}
-              aria-label="Filter sessions"
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-              </svg>
-            </button>
-          </Tooltip>
-          <Tooltip text={offline ? OFFLINE_TITLE : "New project session"}>
-            <button
-              onClick={onNew}
-              disabled={offline}
-              className="w-8 h-8 flex items-center justify-center text-text-muted hover:text-text-secondary hover:bg-surface-800 cursor-pointer rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted disabled:hover:bg-transparent"
-              aria-label="New project session"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                <line x1="12" y1="11" x2="12" y2="17" />
-                <line x1="9" y1="14" x2="15" y2="14" />
-              </svg>
-            </button>
-          </Tooltip>
-          <button
-            onClick={onToggle}
-            className="md:hidden w-8 h-8 flex items-center justify-center text-text-dim hover:text-text-secondary cursor-pointer rounded-md hover:bg-surface-800 ml-1"
-          >
-            &times;
-          </button>
         </div>
 
-        {filterOpen && (
+        {sidebarMode === "sessions" && filterOpen && (
           <div className="px-3 pb-2">
             <input
               ref={filterRef}
@@ -3398,7 +3425,7 @@ export function WorkspaceSidebar({
           </div>
         )}
 
-        {facetOpen && facetSpecs.length > 0 && (
+        {sidebarMode === "sessions" && facetOpen && facetSpecs.length > 0 && (
           <div className="px-3 pb-2 flex flex-col gap-2" data-testid="sidebar-facet-panel">
             {facetSpecs.map((facet) => {
               const selected = facetSelection.get(`${facet.pluginId}\u0000${facet.entryId}`);
@@ -3434,319 +3461,333 @@ export function WorkspaceSidebar({
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden border-t border-surface-700/60">
-          {!isNested && (
-            <DragSuppressContext.Provider value={dragSuppressRef}>
-              <DndContext
-                sensors={sensors}
-                collisionDetection={typedClosestCenter}
-                onDragEnd={reorderDisabled ? undefined : handleDragEnd}
-              >
-                {(() => {
-                  const liveGroups = filteredGroups.filter(sidebarGroupShouldRender);
-                  // Every visible group is sortable, synthetic Multi-repo /
-                  // Scratch included: they default to the bottom but can be
-                  // dragged to any position. Group drag is off while a filter
-                  // is active (the visible list is a partial projection),
-                  // whenever row drag is off (read-only or last-activity
-                  // sort), or on the user-group axis (no manual order). See
-                  // #1644, #1234.
-                  const sortableGroupIds = liveGroups.map((g) => g.id);
-                  const groupDragDisabled = reorderDisabled || q.length > 0;
+        {sidebarMode === "issues" ? (
+          <div className="min-h-0 flex-1">
+            <WorkItemsSidebar
+              projects={projects}
+              sessions={sessions}
+              activeProjectPath={activeProjectPath}
+              selectedIssueRef={selectedIssueRef}
+              readOnly={readOnly}
+              onSelectIssue={onSelectIssue}
+              onCreateFromIssue={onCreateFromIssue}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto overflow-x-hidden border-t border-surface-700/60">
+            {!isNested && (
+              <DragSuppressContext.Provider value={dragSuppressRef}>
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={typedClosestCenter}
+                  onDragEnd={reorderDisabled ? undefined : handleDragEnd}
+                >
+                  {(() => {
+                    const liveGroups = filteredGroups.filter(sidebarGroupShouldRender);
+                    // Every visible group is sortable, synthetic Multi-repo /
+                    // Scratch included: they default to the bottom but can be
+                    // dragged to any position. Group drag is off while a filter
+                    // is active (the visible list is a partial projection),
+                    // whenever row drag is off (read-only or last-activity
+                    // sort), or on the user-group axis (no manual order). See
+                    // #1644, #1234.
+                    const sortableGroupIds = liveGroups.map((g) => g.id);
+                    const groupDragDisabled = reorderDisabled || q.length > 0;
 
-                  const renderGroupBody = (group: SidebarGroup, dragHandle?: DragHandleProps) => {
-                    const showExpanded = hasFilter ? true : !group.collapsed;
-                    const hasActiveChild = group.workspaces.some((v) => v.workspace.id === displayedActiveId);
-                    // Header archive count + action operate on the full group,
-                    // not the filter-sliced one, so "Archive all" never silently
-                    // skips hidden members. Rows below still render `group`.
-                    const fullGroup = groupById.get(group.id) ?? group;
-                    return (
-                      <>
-                        <SidebarGroupHeader
-                          group={{ ...fullGroup, collapsed: !showExpanded }}
-                          hasActiveChild={!showExpanded && hasActiveChild}
-                          onClick={() => !hasFilter && onToggleGroup(group.id)}
-                          onUpdateAppearance={onUpdateRepoAppearance}
-                          onArchiveAll={readOnly || offline ? undefined : () => onArchiveGroup(fullGroup)}
-                          onPin={readOnly || offline ? undefined : onPinProject}
-                          onUnpin={readOnly || offline ? undefined : onUnpinProject}
-                          onNewSession={() =>
-                            group.capabilities.create === "repo" && group.repoPath
-                              ? onCreateSession(group.repoPath)
-                              : onNew()
-                          }
-                          offline={offline}
-                          dragHandle={dragHandle}
-                        />
-                        {showExpanded &&
-                          (() => {
-                            // Each group renders only its live tier. Sunk
-                            // workspaces (archived or actively snoozed across
-                            // every session) are pulled out into a single
-                            // global "Snoozed & archived" section at the very
-                            // bottom of the sidebar, rather than one footer
-                            // per repo group. See #1581.
-                            const liveWorkspaces = group.workspaces.filter((v) => !workspaceIsSunk(v.workspace));
-                            return (
-                              <SortableContext
-                                items={liveWorkspaces.map((v) => v.key)}
-                                strategy={verticalListSortingStrategy}
-                              >
-                                {liveWorkspaces.map((v) => (
-                                  <SortableSessionRow
-                                    key={v.key}
-                                    rowKey={v.key}
-                                    workspace={v.workspace}
-                                    isActive={v.workspace.id === displayedActiveId}
-                                    isSelected={!readOnly && selection.selectedIds.has(v.workspace.id)}
-                                    onActivate={(e) => handleRowActivate(v.workspace.id, e)}
-                                    onDelete={onDeleteSession}
-                                    onStop={onStopSession}
-                                    onStart={onStartSession}
-                                    onSwitchView={onSwitchView}
-                                    onCreateSession={onCreateSession}
-                                    readOnly={readOnly}
-                                    optimistic={triage.optimisticFor(v.workspace.id)}
-                                    onPinToggle={triage.pinToggle}
-                                    onArchiveToggle={triage.archiveToggle}
-                                    onSnooze={triage.snooze}
-                                    onUnreadToggle={triage.unreadToggle}
-                                    bulkApi={rowBulkApi}
-                                    // Drag is disabled when the tier
-                                    // comparator already controls placement:
-                                    // lastActivity mode has no manual
-                                    // concept, pinned rows always float to
-                                    // the top of their group, and the
-                                    // user-group axis has no manual order.
-                                    // See #1581, #1234.
-                                    dragDisabled={reorderDisabled || workspaceIsPinned(v.workspace)}
-                                  />
-                                ))}
-                              </SortableContext>
-                            );
-                          })()}
-                      </>
-                    );
-                  };
-
-                  return (
-                    <SortableContext items={sortableGroupIds} strategy={verticalListSortingStrategy}>
-                      {liveGroups.map((group) => (
-                        <SortableRepoGroup key={group.id} groupId={group.id} disabled={groupDragDisabled}>
-                          {(handle) =>
-                            // Hide the grip when group drag is off (the
-                            // visible order is computed or filtered) so
-                            // there is no dead affordance, mirroring how
-                            // session rows drop their drag wiring.
-                            renderGroupBody(group, groupDragDisabled ? undefined : handle)
-                          }
-                        </SortableRepoGroup>
-                      ))}
-                    </SortableContext>
-                  );
-                })()}
-              </DndContext>
-            </DragSuppressContext.Provider>
-          )}
-          {isNested &&
-            filteredNested.filter(nestedSidebarGroupShouldRender).map((ng) => {
-              const repo = ng.repo;
-              const repoExpanded = hasFilter ? true : !repo.collapsed;
-              const repoHasActiveChild = ng.subgroups.some((sg) =>
-                sg.workspaces.some((v) => v.workspace.id === displayedActiveId),
-              );
-              return (
-                <div key={repo.id} data-testid="sidebar-nested-repo" data-repo-id={repo.id}>
-                  <SidebarGroupHeader
-                    group={{ ...repo, collapsed: !repoExpanded }}
-                    hasActiveChild={!repoExpanded && repoHasActiveChild}
-                    onClick={() => !hasFilter && onToggleGroup(repo.id)}
-                    onUpdateAppearance={onUpdateRepoAppearance}
-                    onArchiveAll={readOnly || offline ? undefined : () => onArchiveGroup(repo)}
-                    onPin={readOnly || offline ? undefined : onPinProject}
-                    onUnpin={readOnly || offline ? undefined : onUnpinProject}
-                    onNewSession={() =>
-                      repo.capabilities.create === "repo" && repo.repoPath ? onCreateSession(repo.repoPath) : onNew()
-                    }
-                    offline={offline}
-                  />
-                  {repoExpanded &&
-                    ng.subgroups.filter(sidebarGroupHasLiveWorkspace).map((sg) => {
-                      const groupPath = sg.groupPath ?? "";
-                      const subExpanded = hasFilter ? true : !sg.collapsed;
-                      const subHasActiveChild = sg.workspaces.some((v) => v.workspace.id === displayedActiveId);
-                      // Sunk rows are pulled into the single global
-                      // footer below, exactly like the flat axes, so
-                      // each subgroup renders only its live tier.
-                      const liveWorkspaces = sg.workspaces.filter((v) => !workspaceIsSunk(v.workspace));
-                      // Resolve the unfiltered subgroup so "Archive all"
-                      // covers the whole subgroup, not just filter matches.
-                      const fullSubgroup =
-                        nestedGroups
-                          .find((n) => n.repo.id === repo.id)
-                          ?.subgroups.find((s) => (s.groupPath ?? "") === groupPath) ?? sg;
+                    const renderGroupBody = (group: SidebarGroup, dragHandle?: DragHandleProps) => {
+                      const showExpanded = hasFilter ? true : !group.collapsed;
+                      const hasActiveChild = group.workspaces.some((v) => v.workspace.id === displayedActiveId);
+                      // Header archive count + action operate on the full group,
+                      // not the filter-sliced one, so "Archive all" never silently
+                      // skips hidden members. Rows below still render `group`.
+                      const fullGroup = groupById.get(group.id) ?? group;
                       return (
-                        <div
-                          key={`${repo.id}::${groupPath}`}
-                          className="pl-3"
-                          data-testid="sidebar-nested-subgroup"
-                          data-repo-id={repo.id}
-                        >
+                        <>
                           <SidebarGroupHeader
-                            group={{ ...fullSubgroup, collapsed: !subExpanded }}
-                            hasActiveChild={!subExpanded && subHasActiveChild}
-                            onClick={() => !hasFilter && onToggleSubgroup(repo.id, groupPath)}
+                            group={{ ...fullGroup, collapsed: !showExpanded }}
+                            hasActiveChild={!showExpanded && hasActiveChild}
+                            onClick={() => !hasFilter && onToggleGroup(group.id)}
                             onUpdateAppearance={onUpdateRepoAppearance}
-                            onArchiveAll={readOnly || offline ? undefined : () => onArchiveGroup(fullSubgroup)}
-                            onNewSession={onNew}
+                            onArchiveAll={readOnly || offline ? undefined : () => onArchiveGroup(fullGroup)}
+                            onPin={readOnly || offline ? undefined : onPinProject}
+                            onUnpin={readOnly || offline ? undefined : onUnpinProject}
+                            onNewSession={() =>
+                              group.capabilities.create === "repo" && group.repoPath
+                                ? onCreateSession(group.repoPath)
+                                : onNew()
+                            }
                             offline={offline}
+                            dragHandle={dragHandle}
                           />
-                          {subExpanded &&
-                            liveWorkspaces.map((v) => (
-                              <SessionRow
-                                key={`${repo.id}::${groupPath}::${v.key}`}
-                                workspace={v.workspace}
-                                isActive={v.workspace.id === displayedActiveId}
-                                isSelected={!readOnly && selection.selectedIds.has(v.workspace.id)}
-                                onActivate={(e) => handleRowActivate(v.workspace.id, e)}
-                                onDelete={onDeleteSession}
-                                onStop={onStopSession}
-                                onStart={onStartSession}
-                                onSwitchView={onSwitchView}
-                                readOnly={readOnly}
-                                optimistic={triage.optimisticFor(v.workspace.id)}
-                                onPinToggle={triage.pinToggle}
-                                onArchiveToggle={triage.archiveToggle}
-                                onSnooze={triage.snooze}
-                                onUnreadToggle={triage.unreadToggle}
-                                bulkApi={rowBulkApi}
-                                indented
-                              />
-                            ))}
-                        </div>
+                          {showExpanded &&
+                            (() => {
+                              // Each group renders only its live tier. Sunk
+                              // workspaces (archived or actively snoozed across
+                              // every session) are pulled out into a single
+                              // global "Snoozed & archived" section at the very
+                              // bottom of the sidebar, rather than one footer
+                              // per repo group. See #1581.
+                              const liveWorkspaces = group.workspaces.filter((v) => !workspaceIsSunk(v.workspace));
+                              return (
+                                <SortableContext
+                                  items={liveWorkspaces.map((v) => v.key)}
+                                  strategy={verticalListSortingStrategy}
+                                >
+                                  {liveWorkspaces.map((v) => (
+                                    <SortableSessionRow
+                                      key={v.key}
+                                      rowKey={v.key}
+                                      workspace={v.workspace}
+                                      isActive={v.workspace.id === displayedActiveId}
+                                      isSelected={!readOnly && selection.selectedIds.has(v.workspace.id)}
+                                      onActivate={(e) => handleRowActivate(v.workspace.id, e)}
+                                      onDelete={onDeleteSession}
+                                      onStop={onStopSession}
+                                      onStart={onStartSession}
+                                      onSwitchView={onSwitchView}
+                                      onCreateSession={onCreateSession}
+                                      readOnly={readOnly}
+                                      optimistic={triage.optimisticFor(v.workspace.id)}
+                                      onPinToggle={triage.pinToggle}
+                                      onArchiveToggle={triage.archiveToggle}
+                                      onSnooze={triage.snooze}
+                                      onUnreadToggle={triage.unreadToggle}
+                                      bulkApi={rowBulkApi}
+                                      // Drag is disabled when the tier
+                                      // comparator already controls placement:
+                                      // lastActivity mode has no manual
+                                      // concept, pinned rows always float to
+                                      // the top of their group, and the
+                                      // user-group axis has no manual order.
+                                      // See #1581, #1234.
+                                      dragDisabled={reorderDisabled || workspaceIsPinned(v.workspace)}
+                                    />
+                                  ))}
+                                </SortableContext>
+                              );
+                            })()}
+                        </>
                       );
-                    })}
+                    };
+
+                    return (
+                      <SortableContext items={sortableGroupIds} strategy={verticalListSortingStrategy}>
+                        {liveGroups.map((group) => (
+                          <SortableRepoGroup key={group.id} groupId={group.id} disabled={groupDragDisabled}>
+                            {(handle) =>
+                              // Hide the grip when group drag is off (the
+                              // visible order is computed or filtered) so
+                              // there is no dead affordance, mirroring how
+                              // session rows drop their drag wiring.
+                              renderGroupBody(group, groupDragDisabled ? undefined : handle)
+                            }
+                          </SortableRepoGroup>
+                        ))}
+                      </SortableContext>
+                    );
+                  })()}
+                </DndContext>
+              </DragSuppressContext.Provider>
+            )}
+            {isNested &&
+              filteredNested.filter(nestedSidebarGroupShouldRender).map((ng) => {
+                const repo = ng.repo;
+                const repoExpanded = hasFilter ? true : !repo.collapsed;
+                const repoHasActiveChild = ng.subgroups.some((sg) =>
+                  sg.workspaces.some((v) => v.workspace.id === displayedActiveId),
+                );
+                return (
+                  <div key={repo.id} data-testid="sidebar-nested-repo" data-repo-id={repo.id}>
+                    <SidebarGroupHeader
+                      group={{ ...repo, collapsed: !repoExpanded }}
+                      hasActiveChild={!repoExpanded && repoHasActiveChild}
+                      onClick={() => !hasFilter && onToggleGroup(repo.id)}
+                      onUpdateAppearance={onUpdateRepoAppearance}
+                      onArchiveAll={readOnly || offline ? undefined : () => onArchiveGroup(repo)}
+                      onPin={readOnly || offline ? undefined : onPinProject}
+                      onUnpin={readOnly || offline ? undefined : onUnpinProject}
+                      onNewSession={() =>
+                        repo.capabilities.create === "repo" && repo.repoPath ? onCreateSession(repo.repoPath) : onNew()
+                      }
+                      offline={offline}
+                    />
+                    {repoExpanded &&
+                      ng.subgroups.filter(sidebarGroupHasLiveWorkspace).map((sg) => {
+                        const groupPath = sg.groupPath ?? "";
+                        const subExpanded = hasFilter ? true : !sg.collapsed;
+                        const subHasActiveChild = sg.workspaces.some((v) => v.workspace.id === displayedActiveId);
+                        // Sunk rows are pulled into the single global
+                        // footer below, exactly like the flat axes, so
+                        // each subgroup renders only its live tier.
+                        const liveWorkspaces = sg.workspaces.filter((v) => !workspaceIsSunk(v.workspace));
+                        // Resolve the unfiltered subgroup so "Archive all"
+                        // covers the whole subgroup, not just filter matches.
+                        const fullSubgroup =
+                          nestedGroups
+                            .find((n) => n.repo.id === repo.id)
+                            ?.subgroups.find((s) => (s.groupPath ?? "") === groupPath) ?? sg;
+                        return (
+                          <div
+                            key={`${repo.id}::${groupPath}`}
+                            className="pl-3"
+                            data-testid="sidebar-nested-subgroup"
+                            data-repo-id={repo.id}
+                          >
+                            <SidebarGroupHeader
+                              group={{ ...fullSubgroup, collapsed: !subExpanded }}
+                              hasActiveChild={!subExpanded && subHasActiveChild}
+                              onClick={() => !hasFilter && onToggleSubgroup(repo.id, groupPath)}
+                              onUpdateAppearance={onUpdateRepoAppearance}
+                              onArchiveAll={readOnly || offline ? undefined : () => onArchiveGroup(fullSubgroup)}
+                              onNewSession={onNew}
+                              offline={offline}
+                            />
+                            {subExpanded &&
+                              liveWorkspaces.map((v) => (
+                                <SessionRow
+                                  key={`${repo.id}::${groupPath}::${v.key}`}
+                                  workspace={v.workspace}
+                                  isActive={v.workspace.id === displayedActiveId}
+                                  isSelected={!readOnly && selection.selectedIds.has(v.workspace.id)}
+                                  onActivate={(e) => handleRowActivate(v.workspace.id, e)}
+                                  onDelete={onDeleteSession}
+                                  onStop={onStopSession}
+                                  onStart={onStartSession}
+                                  onSwitchView={onSwitchView}
+                                  readOnly={readOnly}
+                                  optimistic={triage.optimisticFor(v.workspace.id)}
+                                  onPinToggle={triage.pinToggle}
+                                  onArchiveToggle={triage.archiveToggle}
+                                  onSnooze={triage.snooze}
+                                  onUnreadToggle={triage.unreadToggle}
+                                  bulkApi={rowBulkApi}
+                                  indented
+                                />
+                              ))}
+                          </div>
+                        );
+                      })}
+                  </div>
+                );
+              })}
+            {(() => {
+              // Single global "Snoozed & archived" section at the very
+              // bottom of the sidebar. Aggregates sunk workspaces from
+              // every repo group (live filtered) so users see one
+              // collapsible bucket rather than one footer per repo.
+              // Rows are listed flat in the order they appear inside
+              // their respective groups; each row's SessionRow already
+              // surfaces the title/branch/repo chips that anchor it to
+              // its project. The nested axis flattens across its
+              // repo -> subgroup tree to feed the same bucket. See #1581,
+              // #1720.
+              const sunkWorkspaces = isNested
+                ? filteredNested.flatMap((ng) =>
+                    ng.subgroups.flatMap((sg) =>
+                      sg.workspaces.filter((v) => workspaceIsSunk(v.workspace) && !workspaceIsTrashed(v.workspace)),
+                    ),
+                  )
+                : filteredGroups.flatMap((g) =>
+                    g.workspaces.filter((v) => workspaceIsSunk(v.workspace) && !workspaceIsTrashed(v.workspace)),
+                  );
+              if (sunkWorkspaces.length === 0) return null;
+              return (
+                <div data-testid="sidebar-sunk-section">
+                  <button
+                    onClick={toggleSunkExpanded}
+                    data-testid="sidebar-sunk-toggle"
+                    aria-expanded={sunkExpanded}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest text-text-muted hover:text-text-secondary hover:bg-surface-800/40 cursor-pointer transition-colors border-t border-surface-800/60"
+                  >
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      fill="currentColor"
+                      className={`shrink-0 transition-transform duration-75 ${sunkExpanded ? "" : "-rotate-90"}`}
+                    >
+                      <path
+                        d="M2 3 L5 6.5 L8 3"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                    <span>Snoozed &amp; archived ({sunkWorkspaces.length})</span>
+                  </button>
+                  {sunkExpanded &&
+                    sunkWorkspaces.map((v) => (
+                      <SessionRow
+                        key={v.key}
+                        workspace={v.workspace}
+                        isActive={v.workspace.id === displayedActiveId}
+                        isSelected={!readOnly && selection.selectedIds.has(v.workspace.id)}
+                        onActivate={(e) => handleRowActivate(v.workspace.id, e)}
+                        onDelete={onDeleteSession}
+                        onStop={onStopSession}
+                        onStart={onStartSession}
+                        onSwitchView={onSwitchView}
+                        readOnly={readOnly}
+                        optimistic={triage.optimisticFor(v.workspace.id)}
+                        onPinToggle={triage.pinToggle}
+                        onArchiveToggle={triage.archiveToggle}
+                        onSnooze={triage.snooze}
+                        onUnreadToggle={triage.unreadToggle}
+                        bulkApi={rowBulkApi}
+                        indented
+                      />
+                    ))}
                 </div>
               );
-            })}
-          {(() => {
-            // Single global "Snoozed & archived" section at the very
-            // bottom of the sidebar. Aggregates sunk workspaces from
-            // every repo group (live filtered) so users see one
-            // collapsible bucket rather than one footer per repo.
-            // Rows are listed flat in the order they appear inside
-            // their respective groups; each row's SessionRow already
-            // surfaces the title/branch/repo chips that anchor it to
-            // its project. The nested axis flattens across its
-            // repo -> subgroup tree to feed the same bucket. See #1581,
-            // #1720.
-            const sunkWorkspaces = isNested
-              ? filteredNested.flatMap((ng) =>
-                  ng.subgroups.flatMap((sg) =>
-                    sg.workspaces.filter((v) => workspaceIsSunk(v.workspace) && !workspaceIsTrashed(v.workspace)),
-                  ),
-                )
-              : filteredGroups.flatMap((g) =>
-                  g.workspaces.filter((v) => workspaceIsSunk(v.workspace) && !workspaceIsTrashed(v.workspace)),
-                );
-            if (sunkWorkspaces.length === 0) return null;
-            return (
-              <div data-testid="sidebar-sunk-section">
+            })()}
+
+            <ProjectsSection
+              projects={savedProjects}
+              query={q}
+              readOnly={readOnly}
+              offline={offline}
+              onCreateSession={onCreateSession}
+              onAddProject={onAddProject}
+              onEditProject={onEditProject}
+              onRemoveProject={onRemoveProject}
+            />
+
+            {!hasResults && hasFilter && (
+              <div className="px-4 py-8 text-center">
+                <p className="text-sm text-text-muted">No matches for &ldquo;{filterQuery}&rdquo;</p>
+              </div>
+            )}
+
+            {!hasResults && !hasFilter && (
+              <div className="px-4 py-10 text-center" data-testid="sidebar-empty-state">
+                <p className="text-sm font-medium text-text-secondary">No sessions yet</p>
+                <p className="mt-1 text-[13px] text-text-muted">Create a session to start working in a repo.</p>
                 <button
-                  onClick={toggleSunkExpanded}
-                  data-testid="sidebar-sunk-toggle"
-                  aria-expanded={sunkExpanded}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-mono uppercase tracking-widest text-text-muted hover:text-text-secondary hover:bg-surface-800/40 cursor-pointer transition-colors border-t border-surface-800/60"
+                  onClick={onNew}
+                  disabled={offline}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-brand-500 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-brand-600"
                 >
                   <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 10 10"
-                    fill="currentColor"
-                    className={`shrink-0 transition-transform duration-75 ${sunkExpanded ? "" : "-rotate-90"}`}
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                   >
-                    <path
-                      d="M2 3 L5 6.5 L8 3"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
                   </svg>
-                  <span>Snoozed &amp; archived ({sunkWorkspaces.length})</span>
+                  New session
                 </button>
-                {sunkExpanded &&
-                  sunkWorkspaces.map((v) => (
-                    <SessionRow
-                      key={v.key}
-                      workspace={v.workspace}
-                      isActive={v.workspace.id === displayedActiveId}
-                      isSelected={!readOnly && selection.selectedIds.has(v.workspace.id)}
-                      onActivate={(e) => handleRowActivate(v.workspace.id, e)}
-                      onDelete={onDeleteSession}
-                      onStop={onStopSession}
-                      onStart={onStartSession}
-                      onSwitchView={onSwitchView}
-                      readOnly={readOnly}
-                      optimistic={triage.optimisticFor(v.workspace.id)}
-                      onPinToggle={triage.pinToggle}
-                      onArchiveToggle={triage.archiveToggle}
-                      onSnooze={triage.snooze}
-                      onUnreadToggle={triage.unreadToggle}
-                      bulkApi={rowBulkApi}
-                      indented
-                    />
-                  ))}
               </div>
-            );
-          })()}
-
-          <ProjectsSection
-            projects={savedProjects}
-            query={q}
-            readOnly={readOnly}
-            offline={offline}
-            onCreateSession={onCreateSession}
-            onAddProject={onAddProject}
-            onEditProject={onEditProject}
-            onRemoveProject={onRemoveProject}
-          />
-
-          {!hasResults && hasFilter && (
-            <div className="px-4 py-8 text-center">
-              <p className="text-sm text-text-muted">No matches for &ldquo;{filterQuery}&rdquo;</p>
-            </div>
-          )}
-
-          {!hasResults && !hasFilter && (
-            <div className="px-4 py-10 text-center" data-testid="sidebar-empty-state">
-              <p className="text-sm font-medium text-text-secondary">No sessions yet</p>
-              <p className="mt-1 text-[13px] text-text-muted">Create a session to start working in a repo.</p>
-              <button
-                onClick={onNew}
-                disabled={offline}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-[13px] font-medium text-white hover:bg-brand-500 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-brand-600"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                New session
-              </button>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
 
         <div className="border-t border-surface-700/20 p-2 flex items-center gap-1">
           {trashedWorkspaces.length > 0 && (

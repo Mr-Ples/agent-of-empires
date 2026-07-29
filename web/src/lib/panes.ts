@@ -3,9 +3,9 @@
 // `pane` UI slot; see the plugin slot renderers. The activity bar maps over
 // this list to draw one toggle icon per pane.
 
-import { Bot, FileDiff, SquareTerminal, type LucideIcon } from "lucide-react";
+import { Bot, FileDiff, ScrollText, SquareTerminal, type LucideIcon } from "lucide-react";
 
-export type BuiltinPaneId = "diff" | "terminal" | "agents";
+export type BuiltinPaneId = "diff" | "terminal" | "agents" | "issue";
 
 /** Where a pane is docked. Right is a vertical column beside the main view;
  *  bottom is a horizontal strip below it (left is intentionally deferred). */
@@ -22,6 +22,7 @@ export const BUILTIN_PANES: PaneDescriptor[] = [
   { id: "diff", title: "Diff", icon: FileDiff, defaultDock: "right" },
   { id: "terminal", title: "Terminal", icon: SquareTerminal, defaultDock: "right" },
   { id: "agents", title: "Sub agents", icon: Bot, defaultDock: "right" },
+  { id: "issue", title: "Issue", icon: ScrollText, defaultDock: "right" },
 ];
 
 // Terminal panes are the one kind that supports multiple instances as tabs

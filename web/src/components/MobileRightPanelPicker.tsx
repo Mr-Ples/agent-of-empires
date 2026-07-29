@@ -11,12 +11,14 @@ interface Entry {
 const ENTRIES: Entry[] = [
   { view: "agent", label: "Agent terminal", hint: "The session's main view" },
   { view: "diff", label: "Diff", hint: "Changed files and review" },
+  { view: "issue", label: "Issue", hint: "GitHub issue details" },
   { view: "paired", label: "Paired terminal", hint: "Host or container shell" },
 ];
 
 interface Props {
   open: boolean;
   active: RightPanelView;
+  issueAvailable?: boolean;
   pluginPanes: PluginPane[];
   onSelect: (view: RightPanelView) => void;
   onClose: () => void;
@@ -26,7 +28,7 @@ interface Props {
  *  full-viewport main pane (#1452). Replaces the old slide-in right-panel
  *  overlay, which collapsed the paired terminal to zero height under the
  *  soft keyboard. */
-export function MobileRightPanelPicker({ open, active, pluginPanes, onSelect, onClose }: Props) {
+export function MobileRightPanelPicker({ open, active, issueAvailable, pluginPanes, onSelect, onClose }: Props) {
   // Close on Escape, matching the other dismissible overlays.
   useEffect(() => {
     if (!open) return;
@@ -56,7 +58,7 @@ export function MobileRightPanelPicker({ open, active, pluginPanes, onSelect, on
           <div className="w-9 h-1 rounded-full bg-surface-500/40" />
         </div>
         <ul className="px-2 pb-2">
-          {ENTRIES.map((entry) => {
+          {ENTRIES.filter((entry) => entry.view !== "issue" || issueAvailable).map((entry) => {
             const isActive = entry.view === active;
             return (
               <li key={entry.view}>

@@ -7,9 +7,10 @@ import { DiffFileViewer } from "./diff/DiffFileViewer";
 import { CommentsBanner } from "./diff/comments/CommentsBanner";
 import { SendCommentsDialog } from "./diff/comments/SendCommentsDialog";
 import { PluginPaneBody } from "./plugin/PluginSlots";
+import { IssueDetailsPane } from "./IssueDetailsPane";
 import type { RightPanelView } from "../lib/rightPanelView";
 import { isPluginPaneId, type PluginPane } from "../lib/pluginPanes";
-import type { RepoBase, RichDiffFile, SessionResponse } from "../lib/types";
+import type { RepoBase, RichDiffFile, SessionResponse, WorkItemProjection } from "../lib/types";
 import type { useDiffComments } from "../hooks/useDiffComments";
 import type { FileRef } from "../lib/fileRef";
 
@@ -19,6 +20,9 @@ interface Props {
   view: RightPanelView;
   pluginPanes: PluginPane[];
   onBackToAgent: () => void;
+  selectedIssue: WorkItemProjection | null;
+  onCreateFromIssue?: (item: WorkItemProjection) => void;
+  readOnly?: boolean;
   pairedMounted: boolean;
   activeSession: SessionResponse | null;
   activeSessionId: string | null;
@@ -61,6 +65,9 @@ export function MobileMainPane({
   view,
   pluginPanes,
   onBackToAgent,
+  selectedIssue,
+  onCreateFromIssue,
+  readOnly,
   pairedMounted,
   activeSession,
   activeSessionId,
@@ -90,7 +97,13 @@ export function MobileMainPane({
 }: Props) {
   const activePluginPane = isPluginPaneId(view) ? (pluginPanes.find((p) => p.id === view) ?? null) : null;
   const viewLabel =
-    view === "diff" ? "Diff" : view === "paired" ? "Paired terminal" : (activePluginPane?.title ?? "Plugin");
+    view === "diff"
+      ? "Diff"
+      : view === "issue"
+        ? "Issue"
+        : view === "paired"
+          ? "Paired terminal"
+          : (activePluginPane?.title ?? "Plugin");
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -179,6 +192,12 @@ export function MobileMainPane({
                 />
               </div>
             )}
+          </div>
+        )}
+
+        {view === "issue" && (
+          <div className="absolute inset-0 z-10 flex flex-col min-h-0 overflow-hidden bg-surface-900">
+            <IssueDetailsPane item={selectedIssue} onCreateSession={onCreateFromIssue} readOnly={readOnly} />
           </div>
         )}
 

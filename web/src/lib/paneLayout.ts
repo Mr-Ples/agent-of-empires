@@ -270,7 +270,7 @@ export function syncPluginTabs(layout: DockLayout, available: { id: TabId; defau
 // ActivityBar toggle or by clicking an inline sub-agent card, so it never
 // auto-opens as an empty tab. A v1 layout predates it, so it can never
 // have been "open" there either.
-const AUTO_OPEN_PANES = BUILTIN_PANES.filter((p) => p.id !== "agents");
+const AUTO_OPEN_PANES = BUILTIN_PANES.filter((p) => p.id !== "agents" && p.id !== "issue");
 
 function defaultTemplate(): DockLayout {
   // Desktop opens diff + terminal in the right dock (matches the historical
@@ -408,8 +408,8 @@ export interface PaneLayoutApi {
   moveTab: (tabId: TabId, toDock: DockLocation) => void;
   /** Reorder, move across docks/groups, or split into a new group. */
   placeTab: (tabId: TabId, target: PlaceTarget) => void;
-  /** Activity-bar toggle for a built-in kind ("diff" or "terminal"). */
-  toggleKind: (kind: "diff" | "terminal" | "agents", defaultDock: DockLocation) => void;
+  /** Activity-bar toggle for a built-in pane kind. */
+  toggleKind: (kind: "diff" | "terminal" | "agents" | "issue", defaultDock: DockLocation) => void;
   /** Add/remove a plugin pane tab (activity-bar toggle). */
   togglePlugin: (id: TabId, defaultDock: DockLocation) => void;
   syncPlugins: (available: { id: TabId; defaultDock: DockLocation }[]) => void;
@@ -532,11 +532,11 @@ export function usePaneLayout(sessionId: string | null): PaneLayoutApi {
     [mutate],
   );
   const toggleKind = useCallback(
-    (kind: "diff" | "terminal" | "agents", defaultDock: DockLocation) =>
+    (kind: "diff" | "terminal" | "agents" | "issue", defaultDock: DockLocation) =>
       mutate((l) => {
-        // Single-instance panes (diff, agents) toggle their one tab; the
+        // Single-instance panes toggle their one tab; the
         // terminal kind is multi-instance and toggles the whole group.
-        if (kind === "diff" || kind === "agents") {
+        if (kind === "diff" || kind === "agents" || kind === "issue") {
           const at = findTab(l, kind);
           if (at) return isDockCollapsed(l, at.dock) ? openOrRevealTab(l, kind, defaultDock) : removeTab(l, kind);
           return openOrRevealTab(l, kind, defaultDock);

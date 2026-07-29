@@ -20,6 +20,7 @@ import type { PluginSortContext, SidebarSortMode } from "./lib/sidebarSort";
 import { nextAttentionSessionId, sessionNeedsAttention, workspaceIsTrashed } from "./lib/sidebarSort";
 import { useSidebarSortMode } from "./hooks/useSidebarSortMode";
 import { useSidebarAxis } from "./hooks/useSidebarAxis";
+import { useSidebarMode } from "./hooks/useSidebarMode";
 import { repoGroupToSidebarGroup, type SidebarGroup } from "./lib/sidebarGroups";
 import { useProjects } from "./hooks/useProjects";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
@@ -138,6 +139,7 @@ import { DisconnectBanner } from "./components/DisconnectBanner";
 import { ElevationPrompt } from "./components/ElevationPrompt";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { DashboardUpdateBanner } from "./components/DashboardUpdateBanner";
+import { IssueDetailsPane } from "./components/IssueDetailsPane";
 
 // Pre-#1832 per-browser tour-seen flag. Read once on load to migrate users who
 // already dismissed the tour to the backend; no longer written.
@@ -350,6 +352,11 @@ function AppContent({
 
   const [sidebarSortMode, setSidebarSortMode] = useSidebarSortMode();
   const [sidebarAxis, setSidebarAxis] = useSidebarAxis();
+  const [sidebarMode, setSidebarMode] = useSidebarMode();
+  const [selectedWorkItem, setSelectedWorkItem] = useState<{ project: ProjectInfo; item: WorkItemProjection } | null>(
+    null,
+  );
+  const pendingIssuePaneSessionIdRef = useRef<string | null>(null);
 
   // Active plugin sort (#2401): an ephemeral selection of a live `sort-key`
   // entry. Not persisted (plugin entries die with the daemon). The ref is only
@@ -465,6 +472,13 @@ function AppContent({
     syncPlugins,
     setDockCollapsed,
   } = usePaneLayout(activeSessionId);
+
+  useEffect(() => {
+    if (!pendingIssuePaneSessionIdRef.current || activeSessionId !== pendingIssuePaneSessionIdRef.current) return;
+    openTab("issue", "right");
+    pendingIssuePaneSessionIdRef.current = null;
+  }, [activeSessionId, openTab]);
+
   const pluginPanes = usePluginPanes(activeSessionId);
   const pluginPaneById = useMemo(() => {
     const m = new Map<string, PluginPane>();
@@ -529,8 +543,11 @@ function AppContent({
   // A persisted tab is visible only if its backing pane currently exists: diff
   // and terminals always do; a plugin tab does only while its plugin is loaded.
   const tabAvailable = useCallback(
-    (id: string) => !id.startsWith("plugin:") || pluginPaneById.has(id),
-    [pluginPaneById],
+    (id: string) => {
+      if (id === "issue") return selectedWorkItem?.item.attached_session_id === activeSessionId;
+      return !id.startsWith("plugin:") || pluginPaneById.has(id);
+    },
+    [activeSessionId, pluginPaneById, selectedWorkItem],
   );
   // A dock's groups reduced to what's actually shown: each surviving group keeps
   // its persisted index (so a drop addresses the right group) and a valid active
@@ -578,7 +595,7 @@ function AppContent({
       const defaultDock: DockLocation =
         pluginPaneById.get(kind)?.defaultDock ?? BUILTIN_PANES.find((p) => p.id === kind)?.defaultDock ?? "right";
       if (isPluginPaneId(kind)) togglePlugin(kind, defaultDock);
-      else toggleKind(kind as "diff" | "terminal" | "agents", defaultDock);
+      else toggleKind(kind as "diff" | "terminal" | "agents" | "issue", defaultDock);
     },
     [toggleKind, togglePlugin, pluginPaneById],
   );
@@ -676,8 +693,10 @@ function AppContent({
     return workspaces.find((w) => w.sessions.some((s) => s.id === activeSessionId));
   }, [workspaces, activeSessionId]);
   const activeSession = activeWorkspace?.sessions.find((s) => s.id === activeSessionId);
+
   const allPaneIds: string[] = [
     "diff",
+    ...(selectedWorkItem?.item.attached_session_id === activeSessionId ? ["issue"] : []),
     "terminal",
     // The background-agents panel only applies to structured-view (ACP)
     // sessions; a plain terminal session never launches sub-agents.
@@ -768,6 +787,12 @@ function AppContent({
   if (isPluginPaneId(rightPanelView) && !pluginPanes.some((p) => p.id === rightPanelView)) {
     setRightPanelView("agent");
   }
+  if (
+    rightPanelView === "issue" &&
+    (!selectedWorkItem || (activeSessionId && selectedWorkItem.item.attached_session_id !== activeSessionId))
+  ) {
+    setRightPanelView("agent");
+  }
 
   // Refit the newly active terminal after a single-pane view switch: the
   // layers keep their geometry while hidden (visibility, not display:none),
@@ -817,6 +842,21 @@ function AppContent({
       }
     },
     [navigate, workspaces, focusAgentInput, isCoarse, webSettings.autoOpenKeyboard],
+  );
+
+  const handleSelectIssue = useCallback(
+    (project: ProjectInfo, item: WorkItemProjection) => {
+      setSelectedWorkItem({ project, item });
+      if (item.attached_session_id) {
+        handleSelectSession(item.attached_session_id);
+        if (isMdUp) pendingIssuePaneSessionIdRef.current = item.attached_session_id;
+        else setTimeout(() => setRightPanelView("issue"), 0);
+        return;
+      }
+      navigate("/");
+      if (window.innerWidth < 768) setSidebarOpen(false);
+    },
+    [handleSelectSession, isMdUp, navigate],
   );
 
   const handleSelectWorkspace = (workspaceId: string) => {
@@ -1277,6 +1317,7 @@ function AppContent({
   const handleGoDashboard = useCallback(() => {
     navigate("/");
     setSelectedFile(null);
+    setSelectedWorkItem(null);
   }, [navigate]);
 
   const handleOpenSettings = useCallback(() => {
@@ -1613,6 +1654,15 @@ function AppContent({
     }
 
     if (!activeWorkspace || !activeSession) {
+      if (selectedWorkItem) {
+        return (
+          <IssueDetailsPane
+            item={selectedWorkItem.item}
+            onCreateSession={(item) => handleCreateIssueSession(selectedWorkItem.project, item)}
+            readOnly={serverAbout?.read_only}
+          />
+        );
+      }
       return (
         <Dashboard
           sessions={sessions}
@@ -1643,6 +1693,11 @@ function AppContent({
           view={rightPanelView}
           pluginPanes={pluginPanes}
           onBackToAgent={() => setRightPanelView("agent")}
+          selectedIssue={selectedWorkItem?.item ?? null}
+          onCreateFromIssue={
+            selectedWorkItem ? (item) => handleCreateIssueSession(selectedWorkItem.project, item) : undefined
+          }
+          readOnly={serverAbout?.read_only}
           pairedMounted={pairedMounted}
           activeSession={activeSession ?? null}
           activeSessionId={activeSessionId}
@@ -1701,6 +1756,17 @@ function AppContent({
             commentsSendDisabledReason={commentSendDisabledReason}
             onOpenSendDialog={() => setSendDialogOpen(true)}
             onDiscardAllComments={diffComments.clearComments}
+          />
+        );
+      }
+      if (id === "issue") {
+        return (
+          <IssueDetailsPane
+            item={selectedWorkItem?.item ?? null}
+            onCreateSession={
+              selectedWorkItem ? (item) => handleCreateIssueSession(selectedWorkItem.project, item) : undefined
+            }
+            readOnly={serverAbout?.read_only}
           />
         );
       }
@@ -2027,6 +2093,14 @@ function AppContent({
               onPluginSortChange={setPluginSortRef}
               axis={sidebarAxis}
               onAxisChange={setSidebarAxis}
+              sidebarMode={sidebarMode}
+              onSidebarModeChange={setSidebarMode}
+              projects={projects}
+              sessions={sessions}
+              activeProjectPath={activeSession?.main_repo_path ?? activeSession?.project_path ?? null}
+              selectedIssueRef={selectedWorkItem?.item.issue_ref ?? null}
+              onSelectIssue={handleSelectIssue}
+              onCreateFromIssue={handleCreateIssueSession}
             />
           )}
 
@@ -2153,6 +2227,7 @@ function AppContent({
           <MobileRightPanelPicker
             open={pickerOpen && singlePane}
             active={rightPanelView}
+            issueAvailable={selectedWorkItem?.item.attached_session_id === activeSessionId}
             pluginPanes={pluginPanes}
             onSelect={handlePickView}
             onClose={() => setPickerOpen(false)}
