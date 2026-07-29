@@ -51,6 +51,8 @@ pub struct InstanceParams {
     /// One-shot fork seed. When `Some`, the freshly-built instance is set up
     /// to fork its parent on first launch instead of starting fresh.
     pub fork_seed: Option<crate::session::ForkSeed>,
+    /// Optional GitHub Issue attachment to persist on the new session.
+    pub issue_ref: Option<crate::github::IssueRef>,
 }
 
 /// Result of building an instance, tracking what was created for cleanup purposes.
@@ -669,6 +671,7 @@ pub fn build_instance(
     instance.worktree_info = worktree_info;
     instance.workspace_info = workspace_info;
     instance.yolo_mode = params.yolo_mode;
+    instance.issue_ref = params.issue_ref;
 
     // Apply command overrides and custom agent commands from resolved config.
     // Priority: per-session params > agent_command_override > custom_agents > AgentDef default.
@@ -1789,6 +1792,7 @@ mod tests {
             extra_repo_paths: Vec::new(),
             scratch: false,
             fork_seed: None,
+            issue_ref: None,
         }
     }
 
@@ -1971,6 +1975,7 @@ mod tests {
                 parent_agent_session_id: "parent-uuid".into(),
                 child_session_id: "child-uuid".into(),
             }),
+            issue_ref: None,
         };
         let inst = build_instance(params, &[], &[], "default")
             .unwrap()
@@ -2012,6 +2017,7 @@ mod tests {
             fork_seed: Some(ForkSeed::Structured {
                 parent_acp_session_id: "parent-acp-id".into(),
             }),
+            issue_ref: None,
         };
         let inst = build_instance(params, &[], &[], "default")
             .unwrap()

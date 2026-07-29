@@ -12,6 +12,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::git::error::GitError;
+use crate::github::{IssueAttachmentConflict, IssueRef};
 use crate::session::config::SessionConfig;
 use crate::session::{ClaimOp, EnsureReadyError, EnsureReadyOutcome, Instance, Status, Storage};
 
@@ -121,6 +122,10 @@ pub struct SessionResponse {
     /// `theme.unread`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub unread: bool,
+    /// Optional GitHub Issue attachment, formatted as `owner/repo#number`.
+    /// Trashed sessions still report this until an explicit detach clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issue_ref: Option<String>,
     /// Strictly a single-repo aoe-managed worktree (`worktree_info`). Drives
     /// the sidebar "Edit workdir name" action and the tie-workdir overlay,
     /// neither of which applies to multi-repo workspace sessions. For
@@ -384,6 +389,7 @@ impl SessionResponse {
             // Surface the marker (omitted when read); the web gates the
             // visual on the `session.unread_indicator` setting.
             unread: inst.unread,
+            issue_ref: inst.issue_ref.as_ref().map(ToString::to_string),
             has_managed_worktree: inst
                 .worktree_info
                 .as_ref()
@@ -1571,6 +1577,137 @@ pub struct UpdateGroupBody {
 
 fn apply_session_group(inst: &mut Instance, group: String) {
     inst.group_path = group;
+}
+
+fn parse_optional_issue_ref(value: Option<String>) -> Result<Option<IssueRef>, String> {
+    match value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        Some(value) => value
+            .parse::<IssueRef>()
+            .map(Some)
+            .map_err(|e| format!("Invalid issue_ref: {e}")),
+        None => Ok(None),
+    }
+}
+
+fn issue_ref_conflict_response(conflict: IssueAttachmentConflict) -> axum::response::Response {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "issue_ref_conflict",
+            "message": conflict.to_string(),
+            "issue_ref": conflict.issue_ref.to_string(),
+            "holder_session_id": conflict.holder_session_id,
+        })),
+    )
+        .into_response()
+}
+
+fn issue_ref_holder<'a>(
+    instances: &'a [Instance],
+    target_id: &str,
+    issue_ref: &IssueRef,
+) -> Option<&'a Instance> {
+    instances
+        .iter()
+        .find(|inst| inst.id != target_id && inst.issue_ref.as_ref() == Some(issue_ref))
+}
+
+fn set_issue_ref_on_disk(
+    instances: &mut [Instance],
+    target_id: &str,
+    issue_ref: Option<IssueRef>,
+) -> Result<bool, IssueAttachmentConflict> {
+    if let Some(issue_ref) = &issue_ref {
+        if let Some(holder) = issue_ref_holder(instances, target_id, issue_ref) {
+            return Err(IssueAttachmentConflict {
+                issue_ref: issue_ref.clone(),
+                holder_session_id: holder.id.clone(),
+            });
+        }
+    }
+
+    let Some(inst) = instances.iter_mut().find(|inst| inst.id == target_id) else {
+        return Ok(false);
+    };
+    inst.issue_ref = issue_ref;
+    Ok(true)
+}
+
+#[derive(Deserialize)]
+pub struct UpdateIssueRefBody {
+    /// `null`, empty, or absent detaches; otherwise `owner/repo#number`.
+    #[serde(default)]
+    pub issue_ref: Option<String>,
+}
+
+/// `PATCH /api/sessions/:id/issue-ref`. Explicitly attach or detach a GitHub
+/// Issue Work Item from a session. Trashed sessions are included in conflict
+/// checks because detach is explicit: trashing a session must not free its
+/// Work Item.
+pub async fn update_session_issue_ref(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: Result<Json<UpdateIssueRefBody>, axum::extract::rejection::JsonRejection>,
+) -> impl IntoResponse {
+    if state.read_only {
+        return super::read_only_response();
+    }
+    let Json(body) = match body {
+        Ok(b) => b,
+        Err(rej) => return rej.into_response(),
+    };
+    let issue_ref = match parse_optional_issue_ref(body.issue_ref) {
+        Ok(issue_ref) => issue_ref,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "validation_failed", "message": message})),
+            )
+                .into_response();
+        }
+    };
+
+    let lock = state.instance_lock(&id).await;
+    let _guard = lock.lock().await;
+
+    let profile = {
+        let instances = state.instances.read().await;
+        let Some(inst) = instances.iter().find(|i| i.id == id) else {
+            return super::session_not_found();
+        };
+        inst.source_profile.clone()
+    };
+
+    let persist_id = id.clone();
+    let persist_issue_ref = issue_ref.clone();
+    match with_locked_storage(&state, &profile, move |instances| {
+        set_issue_ref_on_disk(instances, &persist_id, persist_issue_ref)
+    })
+    .await
+    {
+        Ok(Ok(true)) => {}
+        Ok(Ok(false)) => return super::session_gone_after_persist(),
+        Ok(Err(conflict)) => return issue_ref_conflict_response(conflict),
+        Err(()) => return persist_failed_response(),
+    }
+
+    let mut instances = state.instances.write().await;
+    let Some(inst) = instances.iter_mut().find(|i| i.id == id) else {
+        tracing::warn!(
+            target: "http.api.sessions",
+            session = %id,
+            "issue-ref update: instance vanished after persist"
+        );
+        return super::session_gone_after_persist();
+    };
+    inst.issue_ref = issue_ref;
+
+    let response =
+        SessionResponse::from_instance(&*inst, crate::claude_settings::read_tui_fullscreen());
+    (StatusCode::OK, Json(serde_json::json!(response))).into_response()
 }
 
 /// `PATCH /api/sessions/:id/group`. Moves an existing session to another
@@ -4333,6 +4470,8 @@ pub struct CreateSessionBody {
     pub command_override: String,
     #[serde(default)]
     pub custom_instruction: Option<String>,
+    #[serde(default)]
+    pub issue_ref: Option<String>,
     pub profile: Option<String>,
     /// How the new session should render: `structured` or `terminal`. The
     /// bundled wizard sends an explicit value (`structured` for ACP-capable
@@ -4952,6 +5091,17 @@ pub async fn create_session(
         None => None,
     };
 
+    let issue_ref = match parse_optional_issue_ref(body.issue_ref) {
+        Ok(issue_ref) => issue_ref,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "validation_failed", "message": message})),
+            )
+                .into_response();
+        }
+    };
+
     let profile = body.profile.unwrap_or_else(|| state.profile.clone());
 
     let spec = crate::server::session_spawn::StructuredSessionSpec {
@@ -4973,6 +5123,7 @@ pub async fn create_session(
         scratch: body.scratch,
         trust_hooks: body.trust_hooks,
         custom_instruction: body.custom_instruction,
+        issue_ref,
         profile,
         // Never decoded from the request body: only the plugin host path
         // stamps these, through create_structured_session. See #2897.
@@ -5059,6 +5210,9 @@ pub async fn create_session(
                     })),
                 )
                     .into_response();
+            }
+            if let Some(conflict) = e.downcast_ref::<IssueAttachmentConflict>() {
+                return issue_ref_conflict_response(conflict.clone());
             }
             tracing::warn!(target: "http.api.sessions", "Session creation failed: {}", e);
             (
@@ -6392,6 +6546,45 @@ pub async fn serve_session_artifact(Path((id, path)): Path<(String, String)>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod issue_attachment {
+        use super::*;
+
+        fn attached(id: &str, issue_ref: &str) -> Instance {
+            let mut inst = Instance::new(id, "/tmp");
+            inst.id = id.to_string();
+            inst.issue_ref = Some(issue_ref.parse().unwrap());
+            inst
+        }
+
+        #[test]
+        fn trashed_attached_session_still_blocks_issue_ref() {
+            let mut holder = attached("holder", "owner/repo#13");
+            holder.trash();
+            let mut target = Instance::new("target", "/tmp");
+            target.id = "target".to_string();
+            let mut instances = vec![holder, target];
+
+            let result = set_issue_ref_on_disk(
+                &mut instances,
+                "target",
+                Some("owner/repo#13".parse().unwrap()),
+            );
+
+            let conflict = result.expect_err("trashed holder must still conflict");
+            assert_eq!(conflict.holder_session_id, "holder");
+        }
+
+        #[test]
+        fn explicit_detach_frees_issue_ref() {
+            let mut instances = vec![attached("holder", "owner/repo#13")];
+
+            let detached = set_issue_ref_on_disk(&mut instances, "holder", None).unwrap();
+
+            assert!(detached);
+            assert!(instances[0].issue_ref.is_none());
+        }
+    }
 
     // #2536: the workspace-delete order must tear down record-only siblings
     // first and the shared-worktree owner last, so a sibling failure can never
@@ -9171,6 +9364,7 @@ mod workspace_ordering_tests {
             archived_at: None,
             snoozed_until: None,
             unread: false,
+            issue_ref: None,
         }
     }
 

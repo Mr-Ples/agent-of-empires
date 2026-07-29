@@ -820,6 +820,14 @@ fn spec_payload_hash(spec: &StructuredSessionSpec) -> String {
         "custom_instruction",
         spec.custom_instruction.as_deref().unwrap_or_default(),
     );
+    field(
+        "issue_ref",
+        &spec
+            .issue_ref
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
+    );
     field("profile", &spec.profile);
     field(
         "initial_turn",
@@ -889,6 +897,7 @@ mod tests {
             scratch: false,
             trust_hooks: None,
             custom_instruction: None,
+            issue_ref: None,
             profile: "default".to_string(),
             created_by_plugin: None,
             plugin_create_idempotency: None,

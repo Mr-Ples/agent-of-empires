@@ -5509,6 +5509,7 @@ fn test_create_session_in_all_mode_is_findable() {
         command_override: String::new(),
         scratch: false,
         fork_seed: None,
+        issue_ref: None,
         structured: false,
     };
 
@@ -6818,6 +6819,7 @@ fn test_apply_creation_results_returns_session_id() {
         command_override: String::new(),
         scratch: false,
         fork_seed: None,
+        issue_ref: None,
         structured: false,
     };
 
@@ -15363,6 +15365,7 @@ mod post_create_attach_mode {
             command_override: String::new(),
             scratch: false,
             fork_seed: None,
+            issue_ref: None,
             structured: false,
         }
     }

@@ -16,9 +16,9 @@ pub use client::{
 };
 pub use error::{GitHubError, Result};
 pub use issues::{
-    GitHubIssuePayload, IssueLabel, IssueNormalizeError, IssueRecord, IssueRef, IssueRefParseError,
-    IssueState, IssueSyncMetadata, IssueSyncStatus, PullRequestBadge, WorkItemProjection,
-    WorkItemState,
+    GitHubIssuePayload, IssueAttachmentConflict, IssueLabel, IssueNormalizeError, IssueRecord,
+    IssueRef, IssueRefParseError, IssueState, IssueSyncMetadata, IssueSyncStatus, PullRequestBadge,
+    WorkItemProjection, WorkItemState,
 };
 
 /// Default GitHub REST API base.

@@ -42,6 +42,10 @@ pub struct AddArgs {
     #[arg(short = 'P', long)]
     parent: Option<String>,
 
+    /// Attach the new session to a GitHub Issue, formatted as owner/repo#number
+    #[arg(long = "issue-ref")]
+    issue_ref: Option<String>,
+
     /// Fork an existing session: resume its conversation context in a new,
     /// independent session that then diverges. Give the source session's id or
     /// title. Terminal fork; available for agents that support forking
@@ -238,6 +242,22 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
     let storage = Storage::new_unwatched(profile)?;
     let (instances, _groups) = storage.load_with_groups()?;
     let final_title = resolve_session_title(&args, &instances)?;
+    let issue_ref = args
+        .issue_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::parse::<crate::github::IssueRef>)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("Invalid --issue-ref: {e}"))?;
+    if let Some(issue_ref) = &issue_ref {
+        if let Some(holder) = instances
+            .iter()
+            .find(|inst| inst.issue_ref.as_ref() == Some(issue_ref))
+        {
+            bail!("{issue_ref} is already attached to session {}", holder.id);
+        }
+    }
 
     // Resolve the agent tool now, before any worktree/scratch side effects.
     // The fork-eligibility gate keys off the resolved tool (and the source
@@ -623,6 +643,7 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
     if let Some(parent) = parent_id {
         instance.parent_session_id = Some(parent);
     }
+    instance.issue_ref = issue_ref.clone();
 
     // Tool name was resolved before worktree/scratch creation (so the fork
     // gate could bail early without orphaning resources); assign it here.
@@ -1054,6 +1075,17 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
         ) {
             return Ok(false);
         }
+        if let Some(issue_ref) = &instance.issue_ref {
+            if let Some(holder) = all_instances
+                .iter()
+                .find(|inst| inst.issue_ref.as_ref() == Some(issue_ref))
+            {
+                return Err(anyhow::Error::new(crate::github::IssueAttachmentConflict {
+                    issue_ref: issue_ref.clone(),
+                    holder_session_id: holder.id.clone(),
+                }));
+            }
+        }
         all_instances.push(instance.clone());
         if !instance.group_path.is_empty() {
             let mut group_tree = GroupTree::new_with_groups(all_instances, groups);
@@ -1110,6 +1142,9 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
     }
     if let Some(parent) = &args.parent {
         println!("  Parent:  {}", parent);
+    }
+    if let Some(issue_ref) = &instance.issue_ref {
+        println!("  Issue:   {}", issue_ref);
     }
     if instance.sandbox_info.is_some() {
         println!("  Sandbox: enabled");

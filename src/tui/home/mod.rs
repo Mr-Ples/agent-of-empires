@@ -4002,9 +4002,9 @@ impl HomeView {
             CreationResult::Success {
                 session_id,
                 instance,
+                created_worktree,
                 on_launch_hooks_ran,
                 warnings,
-                ..
             } => {
                 // Remove the stub instance
                 if let Some(id) = &stub_id {
@@ -4018,6 +4018,33 @@ impl HomeView {
                         .unwrap_or_else(crate::session::config::resolve_default_profile)
                 });
                 instance.source_profile = target_profile.clone();
+                if let Some(issue_ref) = &instance.issue_ref {
+                    let holder_id = {
+                        self.instances()
+                            .find(|inst| {
+                                inst.id != instance.id && inst.issue_ref.as_ref() == Some(issue_ref)
+                            })
+                            .map(|inst| inst.id.clone())
+                    };
+                    if let Some(holder_id) = holder_id {
+                        tracing::warn!(
+                            target: "tui.home",
+                            session = %instance.id,
+                            issue_ref = %issue_ref,
+                            holder = %holder_id,
+                            "refusing created session with duplicate issue attachment"
+                        );
+                        let worktree = created_worktree.as_ref().map(|wt| CreatedWorktree {
+                            path: PathBuf::from(&wt.path),
+                            main_repo_path: PathBuf::from(&wt.main_repo_path),
+                        });
+                        builder::cleanup_instance(&instance, worktree.as_ref(), &[]);
+                        self.rebuild_group_trees();
+                        self.rebuild_flat_items();
+                        self.update_selected();
+                        return None;
+                    }
+                }
 
                 // Ensure target profile storage exists
                 if !self.storages.contains_key(&target_profile) {

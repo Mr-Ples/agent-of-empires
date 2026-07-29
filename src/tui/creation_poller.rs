@@ -333,6 +333,7 @@ mod tests {
             command_override: String::new(),
             scratch: false,
             fork_seed: Some(seed),
+            issue_ref: None,
             structured: false,
         }
     }

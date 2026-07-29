@@ -110,6 +110,13 @@ pub enum IssueNormalizeError {
     UnsupportedState(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("{issue_ref} is already attached to session {holder_session_id}")]
+pub struct IssueAttachmentConflict {
+    pub issue_ref: IssueRef,
+    pub holder_session_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueState {

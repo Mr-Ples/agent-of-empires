@@ -7128,6 +7128,7 @@ mod tests {
             command_override: String::new(),
             scratch: false,
             fork_seed: None,
+            issue_ref: None,
             structured: false,
         }
     }

@@ -1622,6 +1622,10 @@ fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/sessions/{id}/group", patch(api::update_session_group))
         .route(
+            "/api/sessions/{id}/issue-ref",
+            patch(api::update_session_issue_ref),
+        )
+        .route(
             "/api/sessions/{id}/diff/files",
             get(api::session_diff_files),
         )

@@ -2011,6 +2011,30 @@ export async function renameSession(id: string, title: string): Promise<{ ok: bo
   }
 }
 
+export async function updateSessionIssueRef(
+  id: string,
+  issueRef: string | null,
+): Promise<{ ok: boolean; session?: SessionResponse; message?: string; holderSessionId?: string }> {
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(id)}/issue-ref`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ issue_ref: issueRef }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      return { ok: true, session: body as SessionResponse };
+    }
+    return {
+      ok: false,
+      message: typeof body?.message === "string" ? body.message : undefined,
+      holderSessionId: typeof body?.holder_session_id === "string" ? body.holder_session_id : undefined,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /**
  * Manually re-run smart rename ("Auto-name now") for a still-default-named
  * structured-view session whose automatic rename never landed. Best-effort and

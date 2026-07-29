@@ -258,6 +258,14 @@ impl HomeView {
         #[cfg(not(feature = "serve"))]
         let _ = structured;
         let session_id = instance.id.clone();
+        if let Some(issue_ref) = &instance.issue_ref {
+            if let Some(holder) = self
+                .instances()
+                .find(|inst| inst.id != instance.id && inst.issue_ref.as_ref() == Some(issue_ref))
+            {
+                anyhow::bail!("{issue_ref} is already attached to session {}", holder.id);
+            }
+        }
 
         // Ensure target profile storage exists
         if !self.storages.contains_key(&target_profile) {

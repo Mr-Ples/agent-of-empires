@@ -36,6 +36,7 @@ pub(crate) struct StructuredSessionSpec {
     pub scratch: bool,
     pub trust_hooks: Option<bool>,
     pub custom_instruction: Option<String>,
+    pub issue_ref: Option<crate::github::IssueRef>,
     /// Resolved source profile (request profile, else the server default).
     pub profile: String,
     /// Creating plugin id, when the caller is a plugin worker rather than a
@@ -131,6 +132,7 @@ pub(crate) async fn spawn_structured_session(
             scratch,
             trust_hooks,
             custom_instruction,
+            issue_ref,
             profile,
             created_by_plugin,
             plugin_create_idempotency,
@@ -210,6 +212,7 @@ pub(crate) async fn spawn_structured_session(
             command_override,
             extra_repo_paths,
             scratch,
+            issue_ref: issue_ref.clone(),
             #[cfg(feature = "serve")]
             fork_seed,
             #[cfg(not(feature = "serve"))]
@@ -223,6 +226,7 @@ pub(crate) async fn spawn_structured_session(
         instance.plugin_create_idempotency = plugin_create_idempotency;
         instance.pending_initial_turn = pending_initial_turn;
         instance.acp_mode_id = acp_mode_id;
+        instance.issue_ref = issue_ref;
         let build_warnings = build_result.warnings;
         let created_worktree = build_result.created_worktree;
         let created_workspace_worktrees = build_result.created_workspace_worktrees;
@@ -360,6 +364,17 @@ pub(crate) async fn spawn_structured_session(
             let storage = Storage::new(&profile, file_watch_for_create.clone())?;
             let to_persist = instance.clone();
             storage.update(|all, _groups| {
+                if let Some(issue_ref) = &to_persist.issue_ref {
+                    if let Some(holder) = all
+                        .iter()
+                        .find(|inst| inst.issue_ref.as_ref() == Some(issue_ref))
+                    {
+                        return Err(anyhow::Error::new(crate::github::IssueAttachmentConflict {
+                            issue_ref: issue_ref.clone(),
+                            holder_session_id: holder.id.clone(),
+                        }));
+                    }
+                }
                 all.push(to_persist);
                 Ok(())
             })?;

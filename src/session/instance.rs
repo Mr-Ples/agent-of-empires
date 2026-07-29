@@ -607,6 +607,13 @@ pub struct Instance {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unread: bool,
 
+    /// Optional attachment to a GitHub Issue Work Item. The issue itself is
+    /// modeled independently from the session; this field is only the durable
+    /// one-to-one session attachment. Trashing, archiving, stopping, or closing
+    /// the issue must not clear it. Only an explicit detach writes `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_ref: Option<crate::github::IssueRef>,
+
     /// Internal structured view idle-dormancy marker. Set by the reconciler's
     /// idle-reap pass when a structured view worker is shut down for inactivity
     /// (`acp.auto_stop_idle_secs`); while set, the reconciler skips
@@ -1351,6 +1358,7 @@ impl Instance {
             favorited_at: None,
             snoozed_until: None,
             unread: false,
+            issue_ref: None,
             idle_dormant_since: None,
             pinned_at: None,
             trashed_at: None,

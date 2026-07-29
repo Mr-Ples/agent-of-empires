@@ -90,6 +90,9 @@ export interface SessionResponse {
    *  on the `session.unread_indicator` setting. The chip is suppressed for the
    *  session currently open, which also clears the marker. */
   unread?: boolean;
+  /** Optional GitHub Issue attachment, formatted as `owner/repo#number`.
+   *  Trashed sessions keep reporting this until explicitly detached. */
+  issue_ref?: string | null;
   has_managed_worktree: boolean;
   /** True when deleting this session has aoe-managed worktree state to clean
    *  up, covering single-repo worktrees AND multi-repo workspaces. Only the
@@ -505,6 +508,8 @@ export interface CreateSessionRequest {
   extra_repo_paths?: string[];
   command_override?: string;
   custom_instruction?: string;
+  /** Optional GitHub Issue attachment, formatted as `owner/repo#number`. */
+  issue_ref?: string | null;
   profile?: string;
   /** Substrate selection: true → ACP-based acp (Beta),
    *  false → tmux passthrough (legacy). Server defaults to true on

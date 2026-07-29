@@ -118,6 +118,9 @@ pub struct NewSessionData {
     /// One-shot fork seed carried when this session was opened as a fork of
     /// another. `None` for an ordinary new session.
     pub fork_seed: Option<crate::session::ForkSeed>,
+    /// Optional GitHub Issue attachment. Current manual TUI creation leaves
+    /// this unset; issue-first creation can preload it.
+    pub issue_ref: Option<crate::github::IssueRef>,
     /// Create the session in the structured (ACP) view instead of a tmux
     /// terminal. Only submitted true for ACP-capable tools on serve builds;
     /// validated at submit time via
@@ -155,6 +158,7 @@ impl From<NewSessionData> for crate::session::builder::InstanceParams {
             extra_repo_paths: data.extra_repo_paths,
             scratch: data.scratch,
             fork_seed: data.fork_seed,
+            issue_ref: data.issue_ref,
         }
     }
 }
@@ -2175,6 +2179,7 @@ impl NewSessionDialog {
             command_override: self.command_override.value().trim().to_string(),
             scratch: self.scratch,
             fork_seed: self.fork_seed.clone(),
+            issue_ref: None,
             structured: self.structured_enabled && self.structured_capable,
         })
     }
