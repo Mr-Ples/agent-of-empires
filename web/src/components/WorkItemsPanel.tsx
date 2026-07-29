@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchWorkItems } from "../lib/api";
-import type { ProjectInfo, SessionResponse, WorkItemProjection } from "../lib/types";
+import type { AttentionState, ProjectInfo, SessionResponse, WorkItemProjection } from "../lib/types";
 
 interface Props {
   projects: ProjectInfo[];
@@ -116,6 +116,14 @@ export function WorkItemsPanel({
                     <div className="text-sm text-text-primary truncate">{item.title}</div>
                     <div className="text-xs font-mono text-text-dim">{item.issue_ref}</div>
                   </div>
+                  {item.attached_session_id && item.attention_state && (
+                    <span
+                      className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${attentionDotClass(item.attention_state)}`}
+                      title={attentionLabel(item.attention_state)}
+                      aria-label={attentionLabel(item.attention_state)}
+                      data-attention-state={item.attention_state}
+                    />
+                  )}
                   {attached ? (
                     <div className="flex items-center gap-2 shrink-0">
                       <button
@@ -186,4 +194,34 @@ export function WorkItemsPanel({
       </div>
     </section>
   );
+}
+
+function attentionDotClass(state: AttentionState): string {
+  switch (state) {
+    case "needs_input":
+      return "bg-amber-400";
+    case "error":
+      return "bg-red-500";
+    case "idle":
+      return "bg-surface-500";
+    case "active":
+      return "bg-emerald-500";
+    case "stopped":
+      return "bg-surface-600";
+  }
+}
+
+function attentionLabel(state: AttentionState): string {
+  switch (state) {
+    case "needs_input":
+      return "Needs input";
+    case "error":
+      return "Error";
+    case "idle":
+      return "Idle";
+    case "active":
+      return "Active";
+    case "stopped":
+      return "Stopped";
+  }
 }

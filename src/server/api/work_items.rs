@@ -9,9 +9,11 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::github::{
-    issue_sync_cache_dir, project_work_items, IssueRef, IssueRepository, IssueSyncMetadata,
-    IssueSyncStore, WorkItemListProjection,
+    issue_sync_cache_dir, project_work_items_with_attention, AttentionInputs, IssueRef,
+    IssueRepository, IssueSyncMetadata, IssueSyncStore, RuntimeLiveness, WorkItemListProjection,
+    WorkItemSessionAttachment,
 };
+use crate::session::Status;
 
 use super::AppState;
 
@@ -46,17 +48,38 @@ pub async fn list_work_items(
         }
     };
 
-    let attachments: Vec<(IssueRef, String)> = {
+    let attached_sessions: Vec<AttachedSessionSnapshot> = {
         let instances = state.instances.read().await;
         instances
             .iter()
             .filter_map(|inst| {
                 inst.issue_ref
                     .as_ref()
-                    .map(|issue_ref| (issue_ref.clone(), inst.id.clone()))
+                    .map(|issue_ref| AttachedSessionSnapshot {
+                        issue_ref: issue_ref.clone(),
+                        session_id: inst.id.clone(),
+                        status: inst.status,
+                    })
             })
             .collect()
     };
+    let attachments: Vec<WorkItemSessionAttachment> = attached_sessions
+        .into_iter()
+        .map(|attached| {
+            let lifecycle_needs_input = attached.status == Status::Waiting;
+            let structured_needs_input =
+                session_has_structured_pending(&state, &attached.session_id);
+            WorkItemSessionAttachment {
+                issue_ref: attached.issue_ref,
+                session_id: attached.session_id,
+                attention: AttentionInputs {
+                    runtime_liveness: runtime_liveness_from_status(attached.status),
+                    lifecycle_needs_input,
+                    structured_needs_input,
+                },
+            }
+        })
+        .collect();
 
     let load_repository = repository.clone();
     let cache = match tokio::task::spawn_blocking(move || {
@@ -106,12 +129,7 @@ pub async fn list_work_items(
             .into_response();
     };
 
-    let work_items = project_work_items(
-        cache.issues,
-        attachments
-            .iter()
-            .map(|(issue_ref, session_id)| (issue_ref, session_id.as_str())),
-    );
+    let work_items = project_work_items_with_attention(cache.issues, attachments);
 
     (
         StatusCode::OK,
@@ -122,4 +140,36 @@ pub async fn list_work_items(
         }),
     )
         .into_response()
+}
+
+struct AttachedSessionSnapshot {
+    issue_ref: IssueRef,
+    session_id: String,
+    status: Status,
+}
+
+fn runtime_liveness_from_status(status: Status) -> RuntimeLiveness {
+    match status {
+        Status::Running | Status::Starting | Status::Creating => RuntimeLiveness::Active,
+        Status::Waiting | Status::Idle => RuntimeLiveness::Idle,
+        Status::Stopped | Status::Deleting => RuntimeLiveness::Stopped,
+        Status::Unknown | Status::Error => RuntimeLiveness::Error,
+    }
+}
+
+#[cfg(feature = "serve")]
+fn session_has_structured_pending(state: &AppState, session_id: &str) -> bool {
+    !state
+        .acp_event_store
+        .unresolved_approval_nonces(session_id)
+        .is_empty()
+        || !state
+            .acp_event_store
+            .unresolved_elicitation_nonces(session_id)
+            .is_empty()
+}
+
+#[cfg(not(feature = "serve"))]
+fn session_has_structured_pending(_state: &AppState, _session_id: &str) -> bool {
+    false
 }

@@ -334,6 +334,10 @@ pub struct WorkItemProjection {
     pub state: WorkItemState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attached_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_liveness: Option<RuntimeLiveness>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attention_state: Option<AttentionState>,
     pub labels: Vec<IssueLabel>,
     pub url: String,
     pub pull_request: Option<PullRequestBadge>,
@@ -354,6 +358,100 @@ pub enum WorkItemState {
     Closed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeLiveness {
+    Active,
+    Idle,
+    Stopped,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionState {
+    NeedsInput,
+    Error,
+    Idle,
+    Active,
+    Stopped,
+}
+
+impl AttentionState {
+    pub fn priority(self) -> u8 {
+        match self {
+            AttentionState::NeedsInput => 0,
+            AttentionState::Error => 1,
+            AttentionState::Idle => 2,
+            AttentionState::Active => 3,
+            AttentionState::Stopped => 4,
+        }
+    }
+
+    pub fn visual_tone(self) -> AttentionVisualTone {
+        match self {
+            AttentionState::NeedsInput => AttentionVisualTone::NeedsInput,
+            AttentionState::Error => AttentionVisualTone::Error,
+            AttentionState::Idle => AttentionVisualTone::Idle,
+            AttentionState::Active => AttentionVisualTone::Active,
+            AttentionState::Stopped => AttentionVisualTone::Stopped,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionVisualTone {
+    NeedsInput,
+    Error,
+    Idle,
+    Active,
+    Stopped,
+}
+
+impl AttentionVisualTone {
+    pub fn is_red(self) -> bool {
+        self == AttentionVisualTone::Error
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AttentionInputs {
+    pub runtime_liveness: RuntimeLiveness,
+    pub lifecycle_needs_input: bool,
+    pub structured_needs_input: bool,
+}
+
+impl AttentionInputs {
+    pub fn new(runtime_liveness: RuntimeLiveness) -> Self {
+        Self {
+            runtime_liveness,
+            lifecycle_needs_input: false,
+            structured_needs_input: false,
+        }
+    }
+
+    pub fn compute(self) -> AttentionState {
+        if self.lifecycle_needs_input || self.structured_needs_input {
+            return AttentionState::NeedsInput;
+        }
+
+        match self.runtime_liveness {
+            RuntimeLiveness::Error => AttentionState::Error,
+            RuntimeLiveness::Idle => AttentionState::Idle,
+            RuntimeLiveness::Active => AttentionState::Active,
+            RuntimeLiveness::Stopped => AttentionState::Stopped,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkItemSessionAttachment {
+    pub issue_ref: IssueRef,
+    pub session_id: String,
+    pub attention: AttentionInputs,
+}
+
 impl From<IssueRecord> for WorkItemProjection {
     fn from(issue: IssueRecord) -> Self {
         let state = match issue.state {
@@ -365,6 +463,8 @@ impl From<IssueRecord> for WorkItemProjection {
             title: issue.title.clone(),
             state,
             attached_session_id: None,
+            runtime_liveness: None,
+            attention_state: None,
             labels: issue.labels.clone(),
             url: issue.url.clone(),
             pull_request: issue.pull_request.clone(),
@@ -388,6 +488,33 @@ pub fn project_work_items<'a>(
     for issue in issues {
         let mut work_item = WorkItemProjection::from(issue);
         work_item.attached_session_id = attached_by_issue.get(&work_item.issue_ref).cloned();
+        match work_item.state {
+            WorkItemState::Open => open.push(work_item),
+            WorkItemState::Closed => closed.push(work_item),
+        }
+    }
+
+    WorkItemListProjection { open, closed }
+}
+
+pub fn project_work_items_with_attention(
+    issues: impl IntoIterator<Item = IssueRecord>,
+    attachments: impl IntoIterator<Item = WorkItemSessionAttachment>,
+) -> WorkItemListProjection {
+    let attached_by_issue: HashMap<IssueRef, WorkItemSessionAttachment> = attachments
+        .into_iter()
+        .map(|attachment| (attachment.issue_ref.clone(), attachment))
+        .collect();
+
+    let mut open = Vec::new();
+    let mut closed = Vec::new();
+    for issue in issues {
+        let mut work_item = WorkItemProjection::from(issue);
+        if let Some(attachment) = attached_by_issue.get(&work_item.issue_ref) {
+            work_item.attached_session_id = Some(attachment.session_id.clone());
+            work_item.runtime_liveness = Some(attachment.attention.runtime_liveness);
+            work_item.attention_state = Some(attachment.attention.compute());
+        }
         match work_item.state {
             WorkItemState::Open => open.push(work_item),
             WorkItemState::Closed => closed.push(work_item),
@@ -920,6 +1047,130 @@ mod tests {
             open_attached.issue_ref
         );
         assert_eq!(detached_projection.open[0].attached_session_id, None);
+    }
+
+    #[test]
+    fn attention_inputs_compute_issue_priority_without_lifecycle_status_changes() {
+        assert_eq!(
+            AttentionInputs {
+                runtime_liveness: RuntimeLiveness::Error,
+                lifecycle_needs_input: true,
+                structured_needs_input: false,
+            }
+            .compute(),
+            AttentionState::NeedsInput
+        );
+        assert_eq!(
+            AttentionInputs {
+                runtime_liveness: RuntimeLiveness::Error,
+                lifecycle_needs_input: false,
+                structured_needs_input: true,
+            }
+            .compute(),
+            AttentionState::NeedsInput
+        );
+        assert_eq!(
+            AttentionInputs::new(RuntimeLiveness::Error).compute(),
+            AttentionState::Error
+        );
+        assert_eq!(
+            AttentionInputs::new(RuntimeLiveness::Idle).compute(),
+            AttentionState::Idle
+        );
+        assert_eq!(
+            AttentionInputs::new(RuntimeLiveness::Active).compute(),
+            AttentionState::Active
+        );
+        assert_eq!(
+            AttentionInputs::new(RuntimeLiveness::Stopped).compute(),
+            AttentionState::Stopped
+        );
+
+        assert_eq!(
+            [
+                AttentionState::NeedsInput,
+                AttentionState::Error,
+                AttentionState::Idle,
+                AttentionState::Active,
+                AttentionState::Stopped,
+            ]
+            .map(AttentionState::priority),
+            [0, 1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn attention_visual_tone_reserves_red_for_errors() {
+        for state in [
+            AttentionState::NeedsInput,
+            AttentionState::Idle,
+            AttentionState::Active,
+            AttentionState::Stopped,
+        ] {
+            assert!(
+                !state.visual_tone().is_red(),
+                "{state:?} must not use the error tone"
+            );
+        }
+        assert!(AttentionState::Error.visual_tone().is_red());
+    }
+
+    #[test]
+    fn attention_projection_requires_an_attached_session() {
+        let attached = GitHubIssuePayload {
+            number: 12,
+            title: "Attached issue".to_string(),
+            ..issue_payload()
+        }
+        .normalize(
+            "Mr-Ples",
+            "agent-of-empires",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+        let unattached = GitHubIssuePayload {
+            id: 1002,
+            node_id: "I_other".to_string(),
+            number: 13,
+            title: "Unattached issue".to_string(),
+            html_url: "https://github.com/Mr-Ples/agent-of-empires/issues/13".to_string(),
+            ..issue_payload()
+        }
+        .normalize(
+            "Mr-Ples",
+            "agent-of-empires",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+
+        let projection = project_work_items_with_attention(
+            vec![attached.clone(), unattached],
+            [WorkItemSessionAttachment {
+                issue_ref: attached.issue_ref.clone(),
+                session_id: "session-a".to_string(),
+                attention: AttentionInputs {
+                    runtime_liveness: RuntimeLiveness::Idle,
+                    lifecycle_needs_input: false,
+                    structured_needs_input: true,
+                },
+            }],
+        );
+
+        assert_eq!(
+            projection.open[0].attached_session_id.as_deref(),
+            Some("session-a")
+        );
+        assert_eq!(
+            projection.open[0].runtime_liveness,
+            Some(RuntimeLiveness::Idle)
+        );
+        assert_eq!(
+            projection.open[0].attention_state,
+            Some(AttentionState::NeedsInput)
+        );
+        assert_eq!(projection.open[1].attached_session_id, None);
+        assert_eq!(projection.open[1].runtime_liveness, None);
+        assert_eq!(projection.open[1].attention_state, None);
     }
 
     #[test]

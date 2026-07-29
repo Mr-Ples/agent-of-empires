@@ -132,6 +132,46 @@ describe("WorkItemsPanel", () => {
     expect(onCreateFromIssue).toHaveBeenCalledTimes(1);
   });
 
+  it("renders attention only for attached work items", async () => {
+    vi.mocked(fetchWorkItems).mockResolvedValue(
+      response([
+        item({
+          issue_ref: "mr-ples/agent-of-empires#17",
+          attached_session_id: "s1",
+          runtime_liveness: "idle",
+          attention_state: "needs_input",
+        }),
+        item({
+          issue_ref: "mr-ples/agent-of-empires#18",
+          title: "Unattached issue",
+          attached_session_id: null,
+          runtime_liveness: null,
+          attention_state: null,
+          issue: {
+            ...item().issue,
+            issue_ref: "mr-ples/agent-of-empires#18",
+            title: "Unattached issue",
+          },
+        }),
+      ]),
+    );
+
+    render(
+      <WorkItemsPanel
+        projects={[project]}
+        sessions={[session({ issue_ref: "mr-ples/agent-of-empires#17" })]}
+        onCreateFromIssue={vi.fn()}
+        onSelectSession={vi.fn()}
+        onAttachIssue={vi.fn()}
+        onDetachIssue={vi.fn()}
+      />,
+    );
+
+    const dot = await screen.findByLabelText("Needs input");
+    expect(dot.getAttribute("data-attention-state")).toBe("needs_input");
+    expect(screen.queryByLabelText("Idle")).toBeNull();
+  });
+
   it("attaches existing sessions and detaches without hiding the work item", async () => {
     const onAttachIssue = vi.fn().mockResolvedValue(true);
     const onDetachIssue = vi.fn().mockResolvedValue(true);

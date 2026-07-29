@@ -54,11 +54,17 @@ export interface IssueRecord {
   sync: IssueSyncMetadata;
 }
 
+export type RuntimeLiveness = "active" | "idle" | "stopped" | "error";
+
+export type AttentionState = "needs_input" | "error" | "idle" | "active" | "stopped";
+
 export interface WorkItemProjection {
   issue_ref: string;
   title: string;
   state: "open" | "closed";
   attached_session_id?: string | null;
+  runtime_liveness?: RuntimeLiveness | null;
+  attention_state?: AttentionState | null;
   labels: IssueLabel[];
   url: string;
   pull_request: PullRequestBadge | null;
