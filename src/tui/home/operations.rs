@@ -8,6 +8,33 @@ use crate::tui::restart_poller::RestartRequest;
 
 use super::HomeView;
 
+pub(crate) fn issue_context_prompt_for_new_session(
+    data: &NewSessionData,
+    structured: bool,
+) -> Option<String> {
+    #[cfg(not(feature = "serve"))]
+    {
+        let _ = data;
+        let _ = structured;
+        return None;
+    }
+
+    #[cfg(feature = "serve")]
+    {
+        let issue_ref = data.issue_ref.as_ref()?;
+        if !structured || !data.inject_issue_context.unwrap_or(true) {
+            return None;
+        }
+        let cached_issue_record = crate::session::get_app_dir()
+            .ok()
+            .and_then(|app_dir| crate::github::load_cached_issue_record(app_dir, issue_ref));
+        Some(crate::github::issue_context_prompt(
+            issue_ref,
+            cached_issue_record.as_ref(),
+        ))
+    }
+}
+
 /// Membership predicate for a manual group: matches instances whose
 /// `group_path` equals `group_path` or nests beneath it, optionally scoped to
 /// a single owning profile (`None` matches every profile). `prefix` must be
@@ -241,6 +268,7 @@ impl HomeView {
         // `structured` is applied post-build (mirrors the web create
         // handler); read it off before the params conversion consumes data.
         let structured = data.structured;
+        let pending_initial_turn = issue_context_prompt_for_new_session(&data, structured);
         let params = InstanceParams::from(data);
 
         let build_result = builder::build_instance(
@@ -257,6 +285,9 @@ impl HomeView {
         }
         #[cfg(not(feature = "serve"))]
         let _ = structured;
+        if pending_initial_turn.is_some() {
+            instance.pending_initial_turn = pending_initial_turn;
+        }
         let session_id = instance.id.clone();
         if let Some(issue_ref) = &instance.issue_ref {
             if let Some(holder) = self

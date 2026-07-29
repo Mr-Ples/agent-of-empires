@@ -112,6 +112,8 @@ impl CreationPoller {
         // `structured` is applied post-build (mirrors the web create
         // handler); read it off before the params conversion consumes data.
         let structured = data.structured;
+        let pending_initial_turn =
+            crate::tui::home::issue_context_prompt_for_new_session(&data, structured);
         let params = InstanceParams::from(data);
 
         let build_result =
@@ -133,6 +135,9 @@ impl CreationPoller {
         }
         #[cfg(not(feature = "serve"))]
         let _ = structured;
+        if pending_initial_turn.is_some() {
+            instance.pending_initial_turn = pending_initial_turn;
+        }
         let created_worktree = build_result.created_worktree;
         let created_workspace_worktrees = build_result.created_workspace_worktrees;
         let warnings = build_result.warnings;
@@ -334,6 +339,7 @@ mod tests {
             scratch: false,
             fork_seed: Some(seed),
             issue_ref: None,
+            inject_issue_context: None,
             structured: false,
         }
     }

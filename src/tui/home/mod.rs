@@ -4,6 +4,7 @@ pub(crate) mod bindings;
 mod input;
 mod live_send;
 mod operations;
+pub(crate) use operations::issue_context_prompt_for_new_session;
 pub(crate) mod render;
 
 #[cfg(test)]
@@ -248,6 +249,13 @@ pub(super) struct GroupRenameContext {
     pub(super) old_profile: String,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct ProjectWorkItem {
+    pub(super) project_label: String,
+    pub(super) project_path: String,
+    pub(super) item: crate::github::WorkItemProjection,
+}
+
 /// View mode for the home screen
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ViewMode {
@@ -482,6 +490,10 @@ pub struct HomeView {
     /// it to mark pinned headers. Mirrors the WebUI, where an empty project is
     /// just a registry entry decoupled from any session.
     pub(super) registered_projects: Vec<crate::session::Project>,
+    /// Cached GitHub work items for registered projects, loaded from the
+    /// on-disk issue sync cache. The TUI stays offline here; refreshes happen
+    /// through the normal GitHub sync paths and the home view projects reload.
+    pub(super) project_work_items: Vec<ProjectWorkItem>,
 
     // Dialogs
     pub(super) show_help: bool,
@@ -2126,6 +2138,7 @@ impl HomeView {
                 })
                 .unwrap_or_default(),
             registered_projects: Vec::new(),
+            project_work_items: Vec::new(),
             show_help: false,
             help_scroll: 0,
             new_dialog: None,
@@ -4759,6 +4772,7 @@ impl HomeView {
                     || crate::session::is_within_trash_section(path)
             }
             Item::Session { .. } => false,
+            Item::WorkItem { .. } => false,
         })
     }
 
@@ -4857,13 +4871,28 @@ impl HomeView {
             .into_iter()
             .map(|p| crate::session::Group::new(&p.label, &p.label))
             .collect();
-        let mut tree = GroupTree::new_with_groups(&tree_seed, &empty_pinned);
+        let mut empty_groups = empty_pinned;
+        let mut empty_labels: std::collections::HashSet<String> = empty_groups
+            .iter()
+            .map(|group| group.path.clone())
+            .collect();
+        empty_groups.extend(
+            self.project_work_items
+                .iter()
+                .filter(|work_item| !populated_labels.contains(&work_item.project_label))
+                .filter(|work_item| empty_labels.insert(work_item.project_label.clone()))
+                .map(|work_item| {
+                    crate::session::Group::new(&work_item.project_label, &work_item.project_label)
+                }),
+        );
+        let mut tree = GroupTree::new_with_groups(&tree_seed, &empty_groups);
         for (path, &collapsed) in &self.project_group_collapsed {
             if collapsed {
                 tree.set_collapsed(path, true);
             }
         }
         let mut items = flatten_tree(&tree, &grouped, self.sort_order);
+        self.append_project_work_items(&mut items);
         append_archived_section_by_project(
             &mut items,
             &grouped,
@@ -4875,6 +4904,55 @@ impl HomeView {
         // workspace), pinned below the Archived section.
         append_trash_section(&mut items, &grouped, self.trashed_section_collapsed);
         items
+    }
+
+    fn append_project_work_items(&self, items: &mut Vec<Item>) {
+        if self.project_work_items.is_empty() {
+            return;
+        }
+
+        let mut insertions = Vec::new();
+        for (idx, item) in items.iter().enumerate() {
+            let Item::Group {
+                path, collapsed, ..
+            } = item
+            else {
+                continue;
+            };
+            if *collapsed
+                || crate::session::is_within_archived_section(path)
+                || crate::session::is_within_trash_section(path)
+            {
+                continue;
+            }
+            let depth = item.depth() + 1;
+            for work_item in self
+                .project_work_items
+                .iter()
+                .filter(|work_item| work_item.project_label == *path)
+                .filter(|work_item| work_item.item.attached_session_id.is_none())
+                .filter(|work_item| !self.issue_ref_is_attached(&work_item.item.issue_ref))
+            {
+                insertions.push((
+                    idx,
+                    Item::WorkItem {
+                        project_path: work_item.project_path.clone(),
+                        item: Box::new(work_item.item.clone()),
+                        depth,
+                    },
+                ));
+            }
+        }
+
+        for (idx, item) in insertions.into_iter().rev() {
+            items.insert(idx + 1, item);
+        }
+    }
+
+    fn issue_ref_is_attached(&self, issue_ref: &crate::github::IssueRef) -> bool {
+        self.instances
+            .values()
+            .any(|inst| inst.issue_ref.as_ref() == Some(issue_ref))
     }
 
     /// The active profile filter name, or `None` when no filter is applied.
@@ -5821,6 +5899,7 @@ impl HomeView {
                         })
                         .map(|i| i.source_profile.clone());
                 }
+                crate::session::Item::WorkItem { .. } => {}
             }
         }
         None
@@ -6450,6 +6529,7 @@ impl HomeView {
         use crate::session::projects::{canonical_key, load_merged};
         if self.active_profile.is_some() {
             self.registered_projects = load_merged(&self.config_profile()).unwrap_or_default();
+            self.refresh_project_work_items();
             return;
         }
         let profiles: Vec<String> = self.storages.keys().cloned().collect();
@@ -6463,6 +6543,62 @@ impl HomeView {
             }
         }
         self.registered_projects = merged;
+        self.refresh_project_work_items();
+    }
+
+    fn refresh_project_work_items(&mut self) {
+        use crate::github::{
+            issue_sync_cache_dir, project_work_items, IssueRepository, IssueSyncStore,
+        };
+
+        let Ok(app_dir) = crate::session::get_app_dir() else {
+            self.project_work_items.clear();
+            return;
+        };
+        let store = IssueSyncStore::new(issue_sync_cache_dir(app_dir));
+        let attachments: Vec<(&crate::github::IssueRef, &str)> = self
+            .instances
+            .values()
+            .filter_map(|inst| {
+                inst.issue_ref
+                    .as_ref()
+                    .map(|issue_ref| (issue_ref, inst.id.as_str()))
+            })
+            .collect();
+        let mut seen_repos = std::collections::HashSet::new();
+        let mut out = Vec::new();
+
+        for project in &self.registered_projects {
+            let Some(slug) = crate::git::get_remote_slug(std::path::Path::new(&project.path))
+            else {
+                continue;
+            };
+            let Some((owner, repo)) = slug.split_once('/') else {
+                continue;
+            };
+            if !seen_repos.insert(slug.clone()) {
+                continue;
+            }
+            let Ok(repository) = IssueRepository::new(owner, repo) else {
+                continue;
+            };
+            let Ok(Some(cache)) = store.load(&repository) else {
+                continue;
+            };
+            let projection = project_work_items(cache.issues, attachments.iter().copied());
+            out.extend(projection.open.into_iter().map(|item| ProjectWorkItem {
+                project_label: crate::session::projects::repo_label(&project.path),
+                project_path: project.path.clone(),
+                item,
+            }));
+        }
+
+        out.sort_by(|a, b| {
+            a.project_label
+                .cmp(&b.project_label)
+                .then_with(|| a.item.issue_ref.cmp(&b.item.issue_ref))
+        });
+        self.project_work_items = out;
     }
 
     /// The canonical repo path of the first live (non-archived) session under

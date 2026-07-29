@@ -1436,6 +1436,10 @@ impl HomeView {
                 }
                 (icon, text, style)
             }
+            Item::WorkItem { item, .. } => {
+                let text = Cow::Owned(format!("#{} {}", item.issue_ref.number(), item.title));
+                ("#", text, Style::default().fg(theme.accent))
+            }
             Item::Session { id, .. } => {
                 if let Some(inst) = self.get_instance(id) {
                     match self.view_mode {
@@ -3679,6 +3683,7 @@ impl HomeView {
             Some(Item::Group {
                 collapsed: false, ..
             }) => (Some("Collapse"), None),
+            Some(Item::WorkItem { .. }) => (Some("New"), None),
             Some(Item::Session { id, .. }) => {
                 if self
                     .get_instance(id)

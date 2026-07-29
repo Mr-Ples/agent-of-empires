@@ -4740,6 +4740,7 @@ fn test_o_key_flat_items_sorted_az() {
                     }
                 }
             }
+            Item::WorkItem { .. } => {}
         }
     }
 
@@ -4775,6 +4776,7 @@ fn test_o_key_flat_items_sorted_za() {
                     }
                 }
             }
+            Item::WorkItem { .. } => {}
         }
     }
 
@@ -4812,6 +4814,7 @@ fn test_o_key_flat_items_newest_preserves_insertion_order() {
                     }
                 }
             }
+            Item::WorkItem { .. } => {}
         }
     }
 
@@ -5510,6 +5513,7 @@ fn test_create_session_in_all_mode_is_findable() {
         scratch: false,
         fork_seed: None,
         issue_ref: None,
+        inject_issue_context: None,
         structured: false,
     };
 
@@ -6820,6 +6824,7 @@ fn test_apply_creation_results_returns_session_id() {
         scratch: false,
         fork_seed: None,
         issue_ref: None,
+        inject_issue_context: None,
         structured: false,
     };
 
@@ -9536,6 +9541,233 @@ fn create_test_env_two_projects_mixed_attention() -> TestEnv {
     }
 }
 
+fn github_work_item(issue_ref: &str, title: &str) -> crate::github::WorkItemProjection {
+    let issue_ref: crate::github::IssueRef = issue_ref.parse().unwrap();
+    crate::github::WorkItemProjection::from(crate::github::IssueRecord {
+        issue_ref: issue_ref.clone(),
+        github_id: issue_ref.number(),
+        node_id: format!("node-{}", issue_ref.number()),
+        title: title.to_string(),
+        body: Some("Issue body".to_string()),
+        excerpt: None,
+        state: crate::github::IssueState::Open,
+        labels: Vec::new(),
+        assignees: Vec::new(),
+        url: format!(
+            "https://github.com/{}/{}/issues/{}",
+            issue_ref.owner(),
+            issue_ref.repo(),
+            issue_ref.number()
+        ),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        closed_at: None,
+        pull_request: None,
+        sync: crate::github::IssueSyncMetadata::fresh(chrono::Utc::now()),
+    })
+}
+
+#[test]
+#[serial]
+fn project_mode_injects_unattached_work_items_under_project_headers() {
+    use crate::session::config::GroupByMode;
+
+    let mut env = create_test_env_two_projects_mixed_attention();
+    env.view.group_by = GroupByMode::Project;
+    env.view.project_work_items = vec![super::ProjectWorkItem {
+        project_label: "alpha".to_string(),
+        project_path: "/repos/alpha".to_string(),
+        item: github_work_item(
+            "mr-ples/agent-of-empires#17",
+            "Support issue-first sessions",
+        ),
+    }];
+    env.view.flat_items = env.view.build_flat_items();
+
+    let alpha_idx = env
+        .view
+        .flat_items
+        .iter()
+        .position(|item| matches!(item, Item::Group { name, .. } if name == "alpha"))
+        .expect("alpha project header");
+    match &env.view.flat_items[alpha_idx + 1] {
+        Item::WorkItem {
+            project_path,
+            item,
+            depth,
+        } => {
+            assert_eq!(project_path, "/repos/alpha");
+            assert_eq!(item.issue_ref.to_string(), "mr-ples/agent-of-empires#17");
+            assert_eq!(*depth, 1);
+        }
+        other => panic!("expected work item after alpha header, got {other:?}"),
+    }
+
+    if let Some(project_item) = env.view.project_work_items.first_mut() {
+        project_item.item.attached_session_id = Some("alpha-waiting".to_string());
+    }
+    env.view.flat_items = env.view.build_flat_items();
+    assert!(
+        !env.view
+            .flat_items
+            .iter()
+            .any(|item| matches!(item, Item::WorkItem { .. })),
+        "attached work items should not duplicate their session row"
+    );
+}
+
+#[test]
+#[serial]
+fn project_mode_shows_work_item_project_without_sessions() {
+    use crate::session::config::GroupByMode;
+
+    let mut env = create_test_env_empty();
+    env.view.group_by = GroupByMode::Project;
+    env.view.project_work_items = vec![super::ProjectWorkItem {
+        project_label: "alpha".to_string(),
+        project_path: "/repos/alpha".to_string(),
+        item: github_work_item(
+            "mr-ples/agent-of-empires#17",
+            "Support issue-first sessions",
+        ),
+    }];
+    env.view.flat_items = env.view.build_flat_items();
+
+    assert!(matches!(
+        env.view.flat_items.first(),
+        Some(Item::Group { name, .. }) if name == "alpha"
+    ));
+    assert!(matches!(
+        env.view.flat_items.get(1),
+        Some(Item::WorkItem { item, .. })
+            if item.issue_ref.to_string() == "mr-ples/agent-of-empires#17"
+    ));
+}
+
+#[test]
+#[serial]
+fn n_on_work_item_prefills_issue_session_defaults() {
+    use crate::session::config::GroupByMode;
+
+    let temp = TempDir::new().unwrap();
+    let mut env = create_test_env_empty();
+    env.view.group_by = GroupByMode::Project;
+    env.view.flat_items = vec![Item::WorkItem {
+        project_path: temp.path().to_string_lossy().to_string(),
+        item: Box::new(github_work_item(
+            "mr-ples/agent-of-empires#17",
+            "Support issue-first sessions",
+        )),
+        depth: 1,
+    }];
+    env.view.cursor = 0;
+    env.view.update_selected();
+
+    env.view.handle_key(key(KeyCode::Char('n')), None);
+
+    let dialog = env
+        .view
+        .new_dialog
+        .as_ref()
+        .expect("n should open a new-session dialog");
+    assert_eq!(dialog.path_value(), temp.path().to_string_lossy());
+    assert_eq!(dialog.title_value(), "#17 Support issue-first sessions");
+    assert_eq!(
+        dialog.worktree_branch_value(),
+        "issue-mr-ples-agent-of-empires-17"
+    );
+    assert_eq!(
+        dialog.issue_ref_value().map(ToString::to_string),
+        Some("mr-ples/agent-of-empires#17".to_string())
+    );
+}
+
+#[cfg(feature = "serve")]
+#[test]
+#[serial]
+fn issue_structured_create_sets_pending_issue_context_by_default() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut env = create_test_env_empty();
+
+    let issue_ref: crate::github::IssueRef = "mr-ples/agent-of-empires#17".parse().unwrap();
+    let data = crate::tui::dialogs::NewSessionData {
+        profile: "test".to_string(),
+        title: "Issue session".to_string(),
+        path: project.to_string_lossy().to_string(),
+        group: String::new(),
+        tool: "claude".to_string(),
+        worktree_enabled: false,
+        worktree_branch: None,
+        create_new_branch: false,
+        base_branch: None,
+        extra_repo_paths: Vec::new(),
+        sandbox: false,
+        sandbox_image: String::new(),
+        yolo_mode: false,
+        extra_env: Vec::new(),
+        extra_args: String::new(),
+        command_override: String::new(),
+        scratch: false,
+        fork_seed: None,
+        issue_ref: Some(issue_ref),
+        inject_issue_context: None,
+        structured: true,
+    };
+
+    let session_id = env.view.create_session(data).unwrap();
+    let pending = env
+        .view
+        .get_instance(&session_id)
+        .and_then(|inst| inst.pending_initial_turn.as_deref())
+        .expect("structured issue session should queue issue context");
+    assert!(pending.contains("Issue Context"));
+    assert!(pending.contains("Issue Ref: mr-ples/agent-of-empires#17"));
+}
+
+#[cfg(feature = "serve")]
+#[test]
+#[serial]
+fn issue_structured_create_can_disable_pending_issue_context() {
+    let temp = TempDir::new().unwrap();
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut env = create_test_env_empty();
+
+    let data = crate::tui::dialogs::NewSessionData {
+        profile: "test".to_string(),
+        title: "Issue session".to_string(),
+        path: project.to_string_lossy().to_string(),
+        group: String::new(),
+        tool: "claude".to_string(),
+        worktree_enabled: false,
+        worktree_branch: None,
+        create_new_branch: false,
+        base_branch: None,
+        extra_repo_paths: Vec::new(),
+        sandbox: false,
+        sandbox_image: String::new(),
+        yolo_mode: false,
+        extra_env: Vec::new(),
+        extra_args: String::new(),
+        command_override: String::new(),
+        scratch: false,
+        fork_seed: None,
+        issue_ref: Some("mr-ples/agent-of-empires#17".parse().unwrap()),
+        inject_issue_context: Some(false),
+        structured: true,
+    };
+
+    let session_id = env.view.create_session(data).unwrap();
+    assert!(
+        env.view
+            .get_instance(&session_id)
+            .is_some_and(|inst| inst.pending_initial_turn.is_none()),
+        "disabled Issue Context injection must preserve the attachment without queuing a prompt"
+    );
+}
+
 /// Project grouping must survive Attention sort. Previously `build_flat_items`
 /// short-circuited on `SortOrder::Attention` before checking `GroupByMode`,
 /// flattening the list and dropping project headers. The headers are the
@@ -9606,6 +9838,7 @@ fn project_grouping_sorts_sessions_by_attention_within_group() {
                     }
                 }
             }
+            Item::WorkItem { .. } => {}
         }
     }
     assert_eq!(
@@ -10397,6 +10630,7 @@ fn group_by_toggle_preserves_selected_session() {
     match cursor_item {
         Item::Session { id, .. } => assert_eq!(id, &target_id),
         Item::Group { .. } => panic!("cursor landed on a group header, not the session"),
+        Item::WorkItem { .. } => panic!("cursor landed on a work item, not the session"),
     }
 }
 
@@ -11148,6 +11382,7 @@ fn archived_section_collapsed_hides_project_sub_folders() {
         .filter(|it| match it {
             Item::Group { path, .. } => is_within_archived_section(path),
             Item::Session { .. } => false,
+            Item::WorkItem { .. } => false,
         })
         .collect();
     assert_eq!(
@@ -15366,6 +15601,7 @@ mod post_create_attach_mode {
             scratch: false,
             fork_seed: None,
             issue_ref: None,
+            inject_issue_context: None,
             structured: false,
         }
     }

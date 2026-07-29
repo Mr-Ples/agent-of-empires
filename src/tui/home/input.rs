@@ -2630,6 +2630,11 @@ impl HomeView {
             KeyCode::Enter => {
                 if self.selected_session.is_some() {
                     return self.activate_selected_session();
+                } else if matches!(
+                    self.flat_items.get(self.cursor),
+                    Some(Item::WorkItem { .. })
+                ) {
+                    self.open_new_session_dialog();
                 } else if let Some(Item::Group { path, .. }) = self.flat_items.get(self.cursor) {
                     let path = path.clone();
                     self.toggle_group_collapsed(&path);
@@ -3708,6 +3713,16 @@ impl HomeView {
                         payload: PaletteAction::JumpToCursor(idx),
                     });
                 }
+                Item::WorkItem { item, .. } => {
+                    entries.push(PaletteCommand {
+                        id: "jump-work-item",
+                        title: format!("Jump to issue: {} {}", item.issue_ref, item.title),
+                        group: PaletteGroup::Sessions,
+                        keywords: vec!["issue", "work-item", "jump", "select"],
+                        hotkey: String::new(),
+                        payload: PaletteAction::JumpToCursor(idx),
+                    });
+                }
             }
         }
 
@@ -3817,6 +3832,7 @@ impl HomeView {
             .filter_map(|item| match item {
                 Item::Session { id, .. } => Some(id.clone()),
                 Item::Group { .. } => None,
+                Item::WorkItem { .. } => None,
             })
             .collect();
         let current_session = self.selected_session.clone();
@@ -4103,6 +4119,11 @@ impl HomeView {
             match item {
                 Item::Session { id, .. } => {
                     self.selected_session = Some(id.clone());
+                    self.selected_group = None;
+                    self.selected_group_profile = None;
+                }
+                Item::WorkItem { .. } => {
+                    self.selected_session = None;
                     self.selected_group = None;
                     self.selected_group_profile = None;
                 }
@@ -4684,6 +4705,9 @@ impl HomeView {
                 }
             }
             let is_group = matches!(self.flat_items[idx], super::Item::Group { .. });
+            if matches!(self.flat_items[idx], super::Item::WorkItem { .. }) {
+                return false;
+            }
             // A real project header in project view gets the pin menu; the
             // cursor was just moved onto this row, so `project_group_at_cursor`
             // reflects it. Manual/synthetic group rows keep Rename/Delete.
@@ -4699,6 +4723,7 @@ impl HomeView {
                         .map(|inst| (inst.is_archived(), inst.is_snoozed(), inst.is_unread()))
                         .unwrap_or((false, false, false)),
                     super::Item::Group { .. } => (false, false, false),
+                    super::Item::WorkItem { .. } => (false, false, false),
                 };
                 // Snooze is an Attention-sort triage primitive: the `'h'`
                 // keybinding only fires in Attention sort, so the menu omits
@@ -4715,6 +4740,7 @@ impl HomeView {
                 let can_fork = match &self.flat_items[idx] {
                     super::Item::Session { id, .. } => self.session_can_fork(id),
                     super::Item::Group { .. } => false,
+                    super::Item::WorkItem { .. } => false,
                 };
                 // View switching mirrors the web sidebar's per-session
                 // switch action: offered when a structured session can go
@@ -4724,6 +4750,7 @@ impl HomeView {
                 let switch_view = match &self.flat_items[idx] {
                     super::Item::Session { id, .. } => self.session_switch_view_target(id),
                     super::Item::Group { .. } => None,
+                    super::Item::WorkItem { .. } => None,
                 };
                 ContextMenuDialog::for_session(
                     anchor,
@@ -4900,6 +4927,23 @@ impl HomeView {
             &current_profile,
             profiles,
         ));
+        self.seed_new_session_from_selected_work_item();
+    }
+
+    fn seed_new_session_from_selected_work_item(&mut self) {
+        let Some(Item::WorkItem {
+            project_path, item, ..
+        }) = self.flat_items.get(self.cursor)
+        else {
+            return;
+        };
+        let Some(dialog) = &mut self.new_dialog else {
+            return;
+        };
+
+        dialog.set_path(project_path.clone());
+        dialog.set_issue_defaults(item.issue_ref.clone(), Some(&item.issue));
+        dialog.focus_title();
     }
 
     /// Open the tips overlay (the browsable list from `crate::tips`). Shared by
@@ -5426,6 +5470,14 @@ impl HomeView {
                     }
                     self.activate_selected_session()
                 }
+                Item::WorkItem { .. } => {
+                    if self.cursor != abs_idx {
+                        self.cursor = abs_idx;
+                        self.update_selected();
+                    }
+                    self.open_new_session_dialog();
+                    None
+                }
                 Item::Group { .. } => None,
             };
         }
@@ -5489,6 +5541,13 @@ impl HomeView {
                 } else {
                     self.start_live_send()
                 }
+            }
+            Item::WorkItem { .. } => {
+                if self.cursor != abs_idx {
+                    self.cursor = abs_idx;
+                    self.update_selected();
+                }
+                None
             }
         }
     }
@@ -6360,6 +6419,19 @@ impl HomeView {
         format!("{} {}", inst.title, inst.project_path)
     }
 
+    fn search_haystack_for_item(&self, item: &Item) -> Option<String> {
+        match item {
+            Item::Session { id, .. } => self.get_instance(id).map(Self::search_haystack_for),
+            Item::Group { name, path, .. } => Some(format!("{} {}", name, path)),
+            Item::WorkItem {
+                project_path, item, ..
+            } => Some(format!(
+                "{} {} {} {}",
+                item.issue_ref, item.title, item.url, project_path
+            )),
+        }
+    }
+
     /// Rebuild `flat_items` and re-score any committed `search_matches`
     /// against the new indices. Every mutation site that touches
     /// `self.flat_items` must go through this helper or `search_matches`
@@ -6397,17 +6469,8 @@ impl HomeView {
         let mut buf = Vec::new();
 
         for (idx, item) in self.flat_items.iter().enumerate() {
-            let haystack = match item {
-                Item::Session { id, .. } => {
-                    if let Some(inst) = self.get_instance(id) {
-                        Self::search_haystack_for(inst)
-                    } else {
-                        continue;
-                    }
-                }
-                Item::Group { name, path, .. } => {
-                    format!("{} {}", name, path)
-                }
+            let Some(haystack) = self.search_haystack_for_item(item) else {
+                continue;
             };
 
             let haystack_utf32 = Utf32Str::new(&haystack, &mut buf);
@@ -6451,17 +6514,8 @@ impl HomeView {
         let mut buf = Vec::new();
 
         for (idx, item) in self.flat_items.iter().enumerate() {
-            let haystack = match item {
-                Item::Session { id, .. } => {
-                    if let Some(inst) = self.get_instance(id) {
-                        Self::search_haystack_for(inst)
-                    } else {
-                        continue;
-                    }
-                }
-                Item::Group { name, path, .. } => {
-                    format!("{} {}", name, path)
-                }
+            let Some(haystack) = self.search_haystack_for_item(item) else {
+                continue;
             };
 
             let haystack_utf32 = Utf32Str::new(&haystack, &mut buf);
@@ -7129,6 +7183,7 @@ mod tests {
             scratch: false,
             fork_seed: None,
             issue_ref: None,
+            inject_issue_context: None,
             structured: false,
         }
     }

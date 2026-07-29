@@ -368,6 +368,11 @@ pub enum Item {
         id: String,
         depth: usize,
     },
+    WorkItem {
+        project_path: String,
+        item: Box<crate::github::WorkItemProjection>,
+        depth: usize,
+    },
 }
 
 impl Item {
@@ -375,6 +380,7 @@ impl Item {
         match self {
             Item::Group { depth, .. } => *depth,
             Item::Session { depth, .. } => *depth,
+            Item::WorkItem { depth, .. } => *depth,
         }
     }
 }

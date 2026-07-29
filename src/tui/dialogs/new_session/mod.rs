@@ -121,6 +121,9 @@ pub struct NewSessionData {
     /// Optional GitHub Issue attachment. Current manual TUI creation leaves
     /// this unset; issue-first creation can preload it.
     pub issue_ref: Option<crate::github::IssueRef>,
+    /// Whether an issue-first structured session should receive an initial
+    /// Issue Context prompt. Defaults on for issue-backed structured sessions.
+    pub inject_issue_context: Option<bool>,
     /// Create the session in the structured (ACP) view instead of a tmux
     /// terminal. Only submitted true for ACP-capable tools on serve builds;
     /// validated at submit time via
@@ -283,6 +286,8 @@ pub struct NewSessionDialog {
     /// verbatim into the resulting `NewSessionData` on submit; `None` for an
     /// ordinary new session.
     pub(super) fork_seed: Option<crate::session::ForkSeed>,
+    /// Optional GitHub issue attachment carried into the submitted session.
+    pub(super) issue_ref: Option<crate::github::IssueRef>,
     /// Per-field hit rect captured by the renderer of the main form
     /// so a mouse click / hover can target the same cells the user
     /// sees. Each entry is `(focused_field_index, rect)`. Cleared and
@@ -573,6 +578,7 @@ impl NewSessionDialog {
             confirm_create_dir: None,
             scratch: false,
             fork_seed: None,
+            issue_ref: None,
             focusable_rects: Vec::new(),
             sandbox_config_rects: Vec::new(),
             tool_config_rects: Vec::new(),
@@ -601,6 +607,26 @@ impl NewSessionDialog {
     /// Seed this dialog as a fork (carried into the resulting NewSessionData).
     pub fn set_fork_from(&mut self, seed: crate::session::ForkSeed) {
         self.fork_seed = Some(seed);
+    }
+
+    /// Attach the session created from this dialog to a GitHub issue.
+    pub fn set_issue_ref(&mut self, issue_ref: crate::github::IssueRef) {
+        self.issue_ref = Some(issue_ref);
+    }
+
+    /// Pre-fill title/worktree defaults for issue-first creation.
+    pub fn set_issue_defaults(
+        &mut self,
+        issue_ref: crate::github::IssueRef,
+        issue: Option<&crate::github::IssueRecord>,
+    ) {
+        self.set_title(crate::github::issue_session_default_title(
+            &issue_ref, issue,
+        ));
+        self.worktree_enabled = true;
+        self.worktree_branch = Input::new(crate::github::issue_session_default_branch(&issue_ref));
+        self.create_new_branch = true;
+        self.set_issue_ref(issue_ref);
     }
 
     /// Preselect a specific tool by name (e.g. so a fork opens on the parent's
@@ -636,6 +662,21 @@ impl NewSessionDialog {
     #[cfg(test)]
     pub fn path_value(&self) -> &str {
         self.path.value()
+    }
+
+    #[cfg(test)]
+    pub fn title_value(&self) -> &str {
+        self.title.value()
+    }
+
+    #[cfg(test)]
+    pub fn worktree_branch_value(&self) -> &str {
+        self.worktree_branch.value()
+    }
+
+    #[cfg(test)]
+    pub fn issue_ref_value(&self) -> Option<&crate::github::IssueRef> {
+        self.issue_ref.as_ref()
     }
 
     #[cfg(test)]
@@ -930,6 +971,7 @@ impl NewSessionDialog {
             confirm_create_dir: None,
             scratch: false,
             fork_seed: None,
+            issue_ref: None,
             focusable_rects: Vec::new(),
             sandbox_config_rects: Vec::new(),
             tool_config_rects: Vec::new(),
@@ -1003,6 +1045,7 @@ impl NewSessionDialog {
             confirm_create_dir: None,
             scratch: false,
             fork_seed: None,
+            issue_ref: None,
             focusable_rects: Vec::new(),
             sandbox_config_rects: Vec::new(),
             tool_config_rects: Vec::new(),
@@ -2179,7 +2222,8 @@ impl NewSessionDialog {
             command_override: self.command_override.value().trim().to_string(),
             scratch: self.scratch,
             fork_seed: self.fork_seed.clone(),
-            issue_ref: None,
+            issue_ref: self.issue_ref.clone(),
+            inject_issue_context: self.issue_ref.as_ref().map(|_| true),
             structured: self.structured_enabled && self.structured_capable,
         })
     }
