@@ -2,11 +2,12 @@
 //!
 //! This is the single surface for talking to `api.github.com`. It owns the
 //! base URL, the standard headers, and the mapping from HTTP responses to the
-//! typed [`GitHubError`] taxonomy. Only unauthenticated public reads (such as
-//! the update check) are wired up today via [`GitHubClient::unauthenticated`].
+//! typed [`GitHubError`] taxonomy. Public reads use
+//! [`GitHubClient::unauthenticated`]; issue mutation workflows use
+//! [`GitHubClient::authenticated`].
 
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS, NON_ALPHANUMERIC};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION};
 use reqwest::StatusCode;
 
 /// Characters to percent-encode inside a single URL path segment (a release
@@ -26,11 +27,13 @@ const TAG_SEGMENT: &AsciiSet = &CONTROLS
 const QUERY_VALUE: &AsciiSet = NON_ALPHANUMERIC;
 
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::github::error::{GitHubError, Result};
-use crate::github::GitHubIssuePayload;
+use crate::github::{
+    GitHubIssuePayload, IssueState, ValidatedIssueCreateRequest, ValidatedIssueEditRequest,
+};
 
 /// Configuration for constructing a [`GitHubClient`].
 #[derive(Debug, Clone)]
@@ -135,6 +138,15 @@ struct ApiErrorBody {
 impl GitHubClient {
     /// Client for public, unauthenticated requests.
     pub fn unauthenticated(config: GitHubClientConfig) -> Result<Self> {
+        Self::build(config, None)
+    }
+
+    /// Client for authenticated GitHub workflows, such as issue mutation.
+    pub fn authenticated(config: GitHubClientConfig, token: &str) -> Result<Self> {
+        Self::build(config, Some(token))
+    }
+
+    fn build(config: GitHubClientConfig, token: Option<&str>) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -144,6 +156,11 @@ impl GitHubClient {
             HeaderName::from_static("x-github-api-version"),
             HeaderValue::from_static("2022-11-28"),
         );
+        if let Some(token) = token {
+            let value = HeaderValue::from_str(&format!("Bearer {}", token.trim()))
+                .map_err(|error| GitHubError::InvalidHeader(error.to_string()))?;
+            headers.insert(AUTHORIZATION, value);
+        }
 
         let http = reqwest::Client::builder()
             .user_agent(config.user_agent)
@@ -245,6 +262,76 @@ impl GitHubClient {
         self.send_json(self.http.get(url)).await
     }
 
+    /// `GET /repos/{owner}/{repo}/issues/{issue_number}`
+    pub async fn issue(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+    ) -> Result<GitHubIssuePayload> {
+        let url = format!(
+            "{}/repos/{}/{}/issues/{}",
+            self.api_base, owner, repo, issue_number
+        );
+        self.send_json(self.http.get(url)).await
+    }
+
+    /// `POST /repos/{owner}/{repo}/issues`
+    pub async fn create_issue(
+        &self,
+        owner: &str,
+        repo: &str,
+        request: &ValidatedIssueCreateRequest,
+    ) -> Result<GitHubIssuePayload> {
+        let url = format!("{}/repos/{}/{}/issues", self.api_base, owner, repo);
+        self.send_json(self.http.post(url).json(&CreateIssueBody {
+            title: &request.title,
+            body: request.body.as_deref(),
+            labels: &request.labels,
+        }))
+        .await
+    }
+
+    /// `PATCH /repos/{owner}/{repo}/issues/{issue_number}`
+    pub async fn edit_issue(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        request: &ValidatedIssueEditRequest,
+    ) -> Result<GitHubIssuePayload> {
+        let url = format!(
+            "{}/repos/{}/{}/issues/{}",
+            self.api_base, owner, repo, issue_number
+        );
+        self.send_json(self.http.patch(url).json(&EditIssueBody {
+            title: request.title.as_deref(),
+            body: request.body.as_deref(),
+            labels: request.labels.as_deref(),
+        }))
+        .await
+    }
+
+    /// `PATCH /repos/{owner}/{repo}/issues/{issue_number}` with `state`.
+    pub async fn set_issue_state(
+        &self,
+        owner: &str,
+        repo: &str,
+        issue_number: u64,
+        state: IssueState,
+    ) -> Result<GitHubIssuePayload> {
+        let url = format!(
+            "{}/repos/{}/{}/issues/{}",
+            self.api_base, owner, repo, issue_number
+        );
+        let state = match state {
+            IssueState::Open => "open",
+            IssueState::Closed => "closed",
+        };
+        self.send_json(self.http.patch(url).json(&IssueStateBody { state }))
+            .await
+    }
+
     /// Fetch a single file's raw contents via the contents API (`Accept:
     /// application/vnd.github.raw`). Used to read a plugin's `aoe-plugin.toml`
     /// for the details view without cloning. `reference` pins the branch, tag,
@@ -293,6 +380,30 @@ impl GitHubClient {
         let body = response.text().await.unwrap_or_default();
         Err(classify_status(status, &headers, &body))
     }
+}
+
+#[derive(Serialize)]
+struct CreateIssueBody<'a> {
+    title: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    labels: &'a Vec<String>,
+}
+
+#[derive(Serialize)]
+struct EditIssueBody<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    labels: Option<&'a [String]>,
+}
+
+#[derive(Serialize)]
+struct IssueStateBody<'a> {
+    state: &'a str,
 }
 
 fn classify_transport_error(error: reqwest::Error) -> GitHubError {
@@ -391,6 +502,11 @@ mod tests {
     #[test]
     fn unauthenticated_client_builds() {
         assert!(GitHubClient::unauthenticated(config()).is_ok());
+    }
+
+    #[test]
+    fn authenticated_client_builds() {
+        assert!(GitHubClient::authenticated(config(), "ghp_test").is_ok());
     }
 
     #[test]

@@ -17,14 +17,16 @@ pub use client::{
 };
 pub use error::{GitHubError, Result};
 pub use issues::{
-    project_work_items, GitHubIssuePayload, IssueAttachmentConflict, IssueLabel,
-    IssueNormalizeError, IssueRecord, IssueRef, IssueRefParseError, IssueState,
-    IssueSyncFailureKind, IssueSyncMetadata, IssueSyncStatus, PullRequestBadge,
-    WorkItemListProjection, WorkItemProjection, WorkItemState,
+    project_work_items, GitHubIssuePayload, IssueAttachmentConflict, IssueCreateRequest,
+    IssueEditRequest, IssueLabel, IssueMutationValidationError, IssueNormalizeError, IssueRecord,
+    IssueRef, IssueRefParseError, IssueState, IssueSyncFailureKind, IssueSyncMetadata,
+    IssueSyncStatus, PullRequestBadge, ValidatedIssueCreateRequest, ValidatedIssueEditRequest,
+    WorkItemListProjection, WorkItemProjection, WorkItemState, DEFAULT_TRIAGE_LABEL,
 };
 pub use sync::{
-    issue_sync_cache_dir, GitHubIssueClient, IssueRepository, IssueSyncAuthMode, IssueSyncCache,
-    IssueSyncError, IssueSyncFailure, IssueSyncSnapshot, IssueSyncStore, IssueSyncer,
+    issue_sync_cache_dir, GitHubIssueClient, IssueMutationError, IssueMutationSnapshot,
+    IssueRepository, IssueSyncAuthMode, IssueSyncCache, IssueSyncError, IssueSyncFailure,
+    IssueSyncSnapshot, IssueSyncStore, IssueSyncer,
 };
 
 /// Default GitHub REST API base.

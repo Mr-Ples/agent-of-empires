@@ -23,15 +23,14 @@ pub enum GitHubError {
 
     #[error(
         "GitHub rejected the request (HTTP 401).\n\
-         AoE only makes unauthenticated public requests, so this usually means \
-         the resource is private or the endpoint requires sign-in."
+         The request is unauthenticated, the token was rejected, or the resource \
+         requires a signed-in client."
     )]
     Unauthorized,
 
     #[error(
         "GitHub refused the request for lack of an authorized scope (HTTP 403): {scopes}.\n\
-         AoE makes unauthenticated requests, so it cannot satisfy this; the \
-         resource needs a signed-in client."
+         The current GitHub credential cannot perform this operation."
     )]
     InsufficientScope { scopes: String },
 
@@ -52,6 +51,9 @@ pub enum GitHubError {
 
     #[error("GitHub HTTP request failed: {0}")]
     Http(#[source] reqwest::Error),
+
+    #[error("GitHub request header is invalid: {0}")]
+    InvalidHeader(String),
 }
 
 pub type Result<T> = std::result::Result<T, GitHubError>;
@@ -70,9 +72,9 @@ mod tests {
     }
 
     #[test]
-    fn unauthorized_hint_does_not_push_a_token_path() {
-        // The client is unauthenticated-only, so a 401 hint must not send the
-        // user down a dead token/gh-auth recovery path.
+    fn unauthorized_hint_does_not_push_a_specific_token_path() {
+        // Credential wiring is owned by the calling workflow, so the generic
+        // error must not prescribe one token source.
         let auth = GitHubError::Unauthorized.to_string();
         assert!(!auth.contains("GITHUB_TOKEN") && !auth.contains("gh auth login"));
     }

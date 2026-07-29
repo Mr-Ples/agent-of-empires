@@ -7,14 +7,17 @@ use std::path::PathBuf;
 use std::pin::Pin;
 
 use crate::github::{
-    GitHubError, GitHubIssuePayload, IssueNormalizeError, IssueRecord, IssueSyncFailureKind,
-    IssueSyncMetadata, IssueSyncStatus,
+    GitHubError, GitHubIssuePayload, IssueCreateRequest, IssueEditRequest,
+    IssueMutationValidationError, IssueNormalizeError, IssueRecord, IssueRef, IssueState,
+    IssueSyncFailureKind, IssueSyncMetadata, IssueSyncStatus,
 };
 
 pub const ISSUE_SYNC_CACHE_SUBDIR: &str = "github/issues";
 
 pub type IssueClientFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<GitHubIssuePayload>, IssueSyncFailure>> + Send + 'a>>;
+pub type IssuePayloadFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<GitHubIssuePayload, IssueSyncFailure>> + Send + 'a>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueRepository {
@@ -99,6 +102,9 @@ impl IssueSyncFailure {
             }
             GitHubError::Decode(source) | GitHubError::Http(source) => {
                 Self::new(IssueSyncFailureKind::ApiFailure, source.to_string())
+            }
+            GitHubError::InvalidHeader(message) => {
+                Self::new(IssueSyncFailureKind::ApiFailure, message)
             }
         }
     }
@@ -188,12 +194,57 @@ pub enum IssueSyncError {
     Normalize(#[from] IssueNormalizeError),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum IssueMutationError {
+    #[error(transparent)]
+    Validation(#[from] IssueMutationValidationError),
+    #[error(transparent)]
+    Normalize(#[from] IssueNormalizeError),
+    #[error(transparent)]
+    Cache(#[from] IssueSyncError),
+    #[error("GitHub issue mutation failed: {0}", .failure.message)]
+    GitHub { failure: IssueSyncFailure },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueMutationSnapshot {
+    pub issue: IssueRecord,
+    pub cache: IssueSyncCache,
+}
+
 pub trait GitHubIssueClient: Send + Sync {
     fn list_repo_issues<'a>(
         &'a self,
         repository: &'a IssueRepository,
         auth_mode: IssueSyncAuthMode,
     ) -> IssueClientFuture<'a>;
+
+    fn repo_issue<'a>(
+        &'a self,
+        issue_ref: &'a IssueRef,
+        auth_mode: IssueSyncAuthMode,
+    ) -> IssuePayloadFuture<'a>;
+
+    fn create_repo_issue<'a>(
+        &'a self,
+        repository: &'a IssueRepository,
+        request: &'a crate::github::ValidatedIssueCreateRequest,
+        auth_mode: IssueSyncAuthMode,
+    ) -> IssuePayloadFuture<'a>;
+
+    fn edit_repo_issue<'a>(
+        &'a self,
+        issue_ref: &'a IssueRef,
+        request: &'a crate::github::ValidatedIssueEditRequest,
+        auth_mode: IssueSyncAuthMode,
+    ) -> IssuePayloadFuture<'a>;
+
+    fn set_repo_issue_state<'a>(
+        &'a self,
+        issue_ref: &'a IssueRef,
+        state: IssueState,
+        auth_mode: IssueSyncAuthMode,
+    ) -> IssuePayloadFuture<'a>;
 }
 
 #[derive(Debug, Clone)]
@@ -305,6 +356,186 @@ where
             }
         }
     }
+
+    pub async fn create_issue(
+        &self,
+        repository: &IssueRepository,
+        request: &IssueCreateRequest,
+        auth_mode: IssueSyncAuthMode,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        self.create_issue_at(repository, request, auth_mode, Utc::now())
+            .await
+    }
+
+    pub async fn create_issue_at(
+        &self,
+        repository: &IssueRepository,
+        request: &IssueCreateRequest,
+        auth_mode: IssueSyncAuthMode,
+        synced_at: DateTime<Utc>,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        let request = request.validated()?;
+        let payload = match self
+            .client
+            .create_repo_issue(repository, &request, auth_mode)
+            .await
+        {
+            Ok(payload) => payload,
+            Err(failure) => {
+                let failure = self.persist_failure(repository, failure)?;
+                return Err(IssueMutationError::GitHub { failure });
+            }
+        };
+        self.persist_mutated_payload(repository, payload, synced_at)
+    }
+
+    pub async fn refresh_issue(
+        &self,
+        issue_ref: &IssueRef,
+        auth_mode: IssueSyncAuthMode,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        self.refresh_issue_at(issue_ref, auth_mode, Utc::now())
+            .await
+    }
+
+    pub async fn refresh_issue_at(
+        &self,
+        issue_ref: &IssueRef,
+        auth_mode: IssueSyncAuthMode,
+        synced_at: DateTime<Utc>,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        let repository = IssueRepository::new(issue_ref.owner(), issue_ref.repo())?;
+        let payload = match self.client.repo_issue(issue_ref, auth_mode).await {
+            Ok(payload) => payload,
+            Err(failure) => {
+                let failure = self.persist_failure(&repository, failure)?;
+                return Err(IssueMutationError::GitHub { failure });
+            }
+        };
+        self.persist_mutated_payload(&repository, payload, synced_at)
+    }
+
+    pub async fn edit_issue(
+        &self,
+        issue_ref: &IssueRef,
+        request: &IssueEditRequest,
+        auth_mode: IssueSyncAuthMode,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        self.edit_issue_at(issue_ref, request, auth_mode, Utc::now())
+            .await
+    }
+
+    pub async fn edit_issue_at(
+        &self,
+        issue_ref: &IssueRef,
+        request: &IssueEditRequest,
+        auth_mode: IssueSyncAuthMode,
+        synced_at: DateTime<Utc>,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        let request = request.validated()?;
+        let repository = IssueRepository::new(issue_ref.owner(), issue_ref.repo())?;
+        let payload = match self
+            .client
+            .edit_repo_issue(issue_ref, &request, auth_mode)
+            .await
+        {
+            Ok(payload) => payload,
+            Err(failure) => {
+                let failure = self.persist_failure(&repository, failure)?;
+                return Err(IssueMutationError::GitHub { failure });
+            }
+        };
+        self.persist_mutated_payload(&repository, payload, synced_at)
+    }
+
+    pub async fn close_issue(
+        &self,
+        issue_ref: &IssueRef,
+        auth_mode: IssueSyncAuthMode,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        self.set_issue_state_at(issue_ref, IssueState::Closed, auth_mode, Utc::now())
+            .await
+    }
+
+    pub async fn reopen_issue(
+        &self,
+        issue_ref: &IssueRef,
+        auth_mode: IssueSyncAuthMode,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        self.set_issue_state_at(issue_ref, IssueState::Open, auth_mode, Utc::now())
+            .await
+    }
+
+    pub async fn set_issue_state_at(
+        &self,
+        issue_ref: &IssueRef,
+        state: IssueState,
+        auth_mode: IssueSyncAuthMode,
+        synced_at: DateTime<Utc>,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        let repository = IssueRepository::new(issue_ref.owner(), issue_ref.repo())?;
+        let payload = match self
+            .client
+            .set_repo_issue_state(issue_ref, state, auth_mode)
+            .await
+        {
+            Ok(payload) => payload,
+            Err(failure) => {
+                let failure = self.persist_failure(&repository, failure)?;
+                return Err(IssueMutationError::GitHub { failure });
+            }
+        };
+        self.persist_mutated_payload(&repository, payload, synced_at)
+    }
+
+    fn persist_mutated_payload(
+        &self,
+        repository: &IssueRepository,
+        payload: GitHubIssuePayload,
+        synced_at: DateTime<Utc>,
+    ) -> Result<IssueMutationSnapshot, IssueMutationError> {
+        let sync = IssueSyncMetadata::fresh(synced_at);
+        let issue = payload.normalize(&repository.owner, &repository.repo, sync.clone())?;
+        let mut cache = self
+            .store
+            .load(repository)?
+            .unwrap_or_else(|| IssueSyncCache::empty(repository.clone()));
+        let had_existing_cache = cache.sync.synced_at.is_some()
+            || !cache.issues.is_empty()
+            || cache.sync.status != IssueSyncStatus::Fresh;
+        if let Some(existing) = cache
+            .issues
+            .iter_mut()
+            .find(|existing| existing.issue_ref == issue.issue_ref)
+        {
+            *existing = issue.clone();
+        } else {
+            cache.issues.push(issue.clone());
+        }
+        if !had_existing_cache {
+            cache.sync = sync;
+        }
+        self.store.save(&cache)?;
+        Ok(IssueMutationSnapshot { issue, cache })
+    }
+
+    fn persist_failure(
+        &self,
+        repository: &IssueRepository,
+        failure: IssueSyncFailure,
+    ) -> Result<IssueSyncFailure, IssueMutationError> {
+        let cached = self.store.load(repository)?;
+        let used_stale_cache = cached.is_some();
+        let cache = cached
+            .unwrap_or_else(|| IssueSyncCache::empty(repository.clone()))
+            .with_metadata(if used_stale_cache {
+                failure.stale_metadata()
+            } else {
+                failure.metadata_without_cache()
+            });
+        self.store.save(&cache)?;
+        Ok(failure)
+    }
 }
 
 impl From<GitHubError> for IssueSyncFailure {
@@ -325,11 +556,73 @@ impl GitHubIssueClient for crate::github::GitHubClient {
                 .map_err(|error| IssueSyncFailure::from_github_error(error, auth_mode))
         })
     }
+
+    fn repo_issue<'a>(
+        &'a self,
+        issue_ref: &'a IssueRef,
+        auth_mode: IssueSyncAuthMode,
+    ) -> IssuePayloadFuture<'a> {
+        Box::pin(async move {
+            self.issue(issue_ref.owner(), issue_ref.repo(), issue_ref.number())
+                .await
+                .map_err(|error| IssueSyncFailure::from_github_error(error, auth_mode))
+        })
+    }
+
+    fn create_repo_issue<'a>(
+        &'a self,
+        repository: &'a IssueRepository,
+        request: &'a crate::github::ValidatedIssueCreateRequest,
+        auth_mode: IssueSyncAuthMode,
+    ) -> IssuePayloadFuture<'a> {
+        Box::pin(async move {
+            self.create_issue(&repository.owner, &repository.repo, request)
+                .await
+                .map_err(|error| IssueSyncFailure::from_github_error(error, auth_mode))
+        })
+    }
+
+    fn edit_repo_issue<'a>(
+        &'a self,
+        issue_ref: &'a IssueRef,
+        request: &'a crate::github::ValidatedIssueEditRequest,
+        auth_mode: IssueSyncAuthMode,
+    ) -> IssuePayloadFuture<'a> {
+        Box::pin(async move {
+            self.edit_issue(
+                issue_ref.owner(),
+                issue_ref.repo(),
+                issue_ref.number(),
+                request,
+            )
+            .await
+            .map_err(|error| IssueSyncFailure::from_github_error(error, auth_mode))
+        })
+    }
+
+    fn set_repo_issue_state<'a>(
+        &'a self,
+        issue_ref: &'a IssueRef,
+        state: IssueState,
+        auth_mode: IssueSyncAuthMode,
+    ) -> IssuePayloadFuture<'a> {
+        Box::pin(async move {
+            self.set_issue_state(
+                issue_ref.owner(),
+                issue_ref.repo(),
+                issue_ref.number(),
+                state,
+            )
+            .await
+            .map_err(|error| IssueSyncFailure::from_github_error(error, auth_mode))
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::github::issues::GitHubIssueLabelPayload;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -357,19 +650,38 @@ mod tests {
 
     struct FakeGitHubIssueClient {
         responses: Mutex<VecDeque<Result<Vec<GitHubIssuePayload>, IssueSyncFailure>>>,
+        payload_responses: Mutex<VecDeque<Result<GitHubIssuePayload, IssueSyncFailure>>>,
         auth_modes: Mutex<Vec<IssueSyncAuthMode>>,
+        mutation_calls: Mutex<Vec<String>>,
     }
 
     impl FakeGitHubIssueClient {
         fn new(responses: Vec<Result<Vec<GitHubIssuePayload>, IssueSyncFailure>>) -> Self {
             Self {
                 responses: Mutex::new(responses.into()),
+                payload_responses: Mutex::new(VecDeque::new()),
                 auth_modes: Mutex::new(Vec::new()),
+                mutation_calls: Mutex::new(Vec::new()),
             }
         }
 
         fn auth_modes(&self) -> Vec<IssueSyncAuthMode> {
             self.auth_modes.lock().unwrap().clone()
+        }
+
+        fn with_payload_responses(
+            payload_responses: Vec<Result<GitHubIssuePayload, IssueSyncFailure>>,
+        ) -> Self {
+            Self {
+                responses: Mutex::new(VecDeque::new()),
+                payload_responses: Mutex::new(payload_responses.into()),
+                auth_modes: Mutex::new(Vec::new()),
+                mutation_calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn mutation_calls(&self) -> Vec<String> {
+            self.mutation_calls.lock().unwrap().clone()
         }
     }
 
@@ -388,6 +700,85 @@ mod tests {
                     .expect("fake response queued")
             })
         }
+
+        fn repo_issue<'a>(
+            &'a self,
+            issue_ref: &'a IssueRef,
+            auth_mode: IssueSyncAuthMode,
+        ) -> IssuePayloadFuture<'a> {
+            Box::pin(async move {
+                self.auth_modes.lock().unwrap().push(auth_mode);
+                self.mutation_calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("refresh:{issue_ref}"));
+                self.payload_responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("fake payload response queued")
+            })
+        }
+
+        fn create_repo_issue<'a>(
+            &'a self,
+            repository: &'a IssueRepository,
+            request: &'a crate::github::ValidatedIssueCreateRequest,
+            auth_mode: IssueSyncAuthMode,
+        ) -> IssuePayloadFuture<'a> {
+            Box::pin(async move {
+                self.auth_modes.lock().unwrap().push(auth_mode);
+                self.mutation_calls.lock().unwrap().push(format!(
+                    "create:{}:{}:{:?}",
+                    repository.owner, request.title, request.labels
+                ));
+                self.payload_responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("fake payload response queued")
+            })
+        }
+
+        fn edit_repo_issue<'a>(
+            &'a self,
+            issue_ref: &'a IssueRef,
+            request: &'a crate::github::ValidatedIssueEditRequest,
+            auth_mode: IssueSyncAuthMode,
+        ) -> IssuePayloadFuture<'a> {
+            Box::pin(async move {
+                self.auth_modes.lock().unwrap().push(auth_mode);
+                self.mutation_calls.lock().unwrap().push(format!(
+                    "edit:{}:{:?}:{:?}",
+                    issue_ref, request.title, request.labels
+                ));
+                self.payload_responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("fake payload response queued")
+            })
+        }
+
+        fn set_repo_issue_state<'a>(
+            &'a self,
+            issue_ref: &'a IssueRef,
+            state: IssueState,
+            auth_mode: IssueSyncAuthMode,
+        ) -> IssuePayloadFuture<'a> {
+            Box::pin(async move {
+                self.auth_modes.lock().unwrap().push(auth_mode);
+                self.mutation_calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("state:{issue_ref}:{state:?}"));
+                self.payload_responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("fake payload response queued")
+            })
+        }
     }
 
     fn syncer(
@@ -397,6 +788,20 @@ mod tests {
         let store = IssueSyncStore::new(temp.path().join("issues"));
         (
             IssueSyncer::new(FakeGitHubIssueClient::new(responses), store),
+            temp,
+        )
+    }
+
+    fn mutation_syncer(
+        payload_responses: Vec<Result<GitHubIssuePayload, IssueSyncFailure>>,
+    ) -> (IssueSyncer<FakeGitHubIssueClient>, tempfile::TempDir) {
+        let temp = tempfile::tempdir().unwrap();
+        let store = IssueSyncStore::new(temp.path().join("issues"));
+        (
+            IssueSyncer::new(
+                FakeGitHubIssueClient::with_payload_responses(payload_responses),
+                store,
+            ),
             temp,
         )
     }
@@ -547,6 +952,295 @@ mod tests {
             syncer.client.auth_modes(),
             vec![IssueSyncAuthMode::Interactive]
         );
+    }
+
+    #[tokio::test]
+    async fn create_issue_validates_request_applies_default_label_and_updates_cache() {
+        let repo = repository();
+        let created = GitHubIssuePayload {
+            number: 21,
+            title: "Created issue".to_string(),
+            labels: vec![GitHubIssueLabelPayload {
+                name: "needs-triage".to_string(),
+                color: Some("ffffff".to_string()),
+                description: None,
+            }],
+            ..payload(21, "Created issue")
+        };
+        let (syncer, _temp) = mutation_syncer(vec![Ok(created)]);
+        let request = IssueCreateRequest {
+            title: " Created issue ".to_string(),
+            body: None,
+            labels: Vec::new(),
+            apply_default_triage_label: true,
+        };
+
+        let snapshot = syncer
+            .create_issue_at(
+                &repo,
+                &request,
+                IssueSyncAuthMode::Interactive,
+                ts("2026-07-29T10:00:00Z"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            snapshot.issue.issue_ref.to_string(),
+            "mr-ples/agent-of-empires#21"
+        );
+        assert_eq!(
+            syncer.client.mutation_calls(),
+            vec!["create:mr-ples:Created issue:[\"needs-triage\"]"]
+        );
+        let persisted = syncer.store.load(&repo).unwrap().unwrap();
+        assert_eq!(persisted.issues[0].title, "Created issue");
+        assert_eq!(
+            persisted.issues[0].sync.synced_at,
+            Some(ts("2026-07-29T10:00:00Z"))
+        );
+        assert_eq!(
+            syncer.client.auth_modes(),
+            vec![IssueSyncAuthMode::Interactive]
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_issue_updates_only_the_affected_record() {
+        let repo = repository();
+        let issue_ref = IssueRef::new("Mr-Ples", "agent-of-empires", 14).unwrap();
+        let (syncer, _temp) = mutation_syncer(vec![Ok(GitHubIssuePayload {
+            title: "Refreshed issue".to_string(),
+            ..payload(14, "Refreshed issue")
+        })]);
+        syncer
+            .store
+            .save(&IssueSyncCache {
+                repository: repo.clone(),
+                issues: vec![
+                    payload(14, "Old issue")
+                        .normalize(
+                            &repo.owner,
+                            &repo.repo,
+                            IssueSyncMetadata::fresh(ts("2026-07-29T09:00:00Z")),
+                        )
+                        .unwrap(),
+                    payload(15, "Other issue")
+                        .normalize(
+                            &repo.owner,
+                            &repo.repo,
+                            IssueSyncMetadata::fresh(ts("2026-07-29T09:00:00Z")),
+                        )
+                        .unwrap(),
+                ],
+                sync: IssueSyncMetadata::fresh(ts("2026-07-29T09:00:00Z")),
+            })
+            .unwrap();
+
+        let snapshot = syncer
+            .refresh_issue_at(
+                &issue_ref,
+                IssueSyncAuthMode::NonInteractive,
+                ts("2026-07-29T10:00:00Z"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.issue.title, "Refreshed issue");
+        assert_eq!(snapshot.cache.issues.len(), 2);
+        assert_eq!(snapshot.cache.issues[1].title, "Other issue");
+        assert_eq!(
+            syncer.client.mutation_calls(),
+            vec!["refresh:mr-ples/agent-of-empires#14"]
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_issue_replaces_cached_record_without_touching_unsupported_fields() {
+        let repo = repository();
+        let issue_ref = IssueRef::new("Mr-Ples", "agent-of-empires", 14).unwrap();
+        let (syncer, _temp) = mutation_syncer(vec![Ok(GitHubIssuePayload {
+            title: "Edited issue".to_string(),
+            body: Some("Edited body".to_string()),
+            labels: vec![GitHubIssueLabelPayload {
+                name: "p1".to_string(),
+                color: None,
+                description: None,
+            }],
+            ..payload(14, "Edited issue")
+        })]);
+        syncer
+            .store
+            .save(&IssueSyncCache {
+                repository: repo.clone(),
+                issues: vec![payload(14, "Old issue")
+                    .normalize(
+                        &repo.owner,
+                        &repo.repo,
+                        IssueSyncMetadata::fresh(ts("2026-07-29T09:00:00Z")),
+                    )
+                    .unwrap()],
+                sync: IssueSyncMetadata::fresh(ts("2026-07-29T09:00:00Z")),
+            })
+            .unwrap();
+
+        let snapshot = syncer
+            .edit_issue_at(
+                &issue_ref,
+                &IssueEditRequest {
+                    title: Some(" Edited issue ".to_string()),
+                    body: Some(" Edited body ".to_string()),
+                    labels: Some(vec!["p1".to_string()]),
+                },
+                IssueSyncAuthMode::NonInteractive,
+                ts("2026-07-29T10:00:00Z"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.cache.issues.len(), 1);
+        assert_eq!(snapshot.issue.title, "Edited issue");
+        assert_eq!(snapshot.issue.body.as_deref(), Some("Edited body"));
+        assert_eq!(
+            syncer.client.mutation_calls(),
+            vec!["edit:mr-ples/agent-of-empires#14:Some(\"Edited issue\"):Some([\"p1\"])"]
+        );
+    }
+
+    #[tokio::test]
+    async fn mutation_keeps_existing_repo_sync_metadata() {
+        let repo = repository();
+        let issue_ref = IssueRef::new("Mr-Ples", "agent-of-empires", 14).unwrap();
+        let (syncer, _temp) = mutation_syncer(vec![Ok(GitHubIssuePayload {
+            title: "Edited issue".to_string(),
+            ..payload(14, "Edited issue")
+        })]);
+        syncer
+            .store
+            .save(&IssueSyncCache {
+                repository: repo.clone(),
+                issues: vec![payload(14, "Old issue")
+                    .normalize(
+                        &repo.owner,
+                        &repo.repo,
+                        IssueSyncMetadata::stale(IssueSyncFailureKind::Network, "offline"),
+                    )
+                    .unwrap()],
+                sync: IssueSyncMetadata::stale(IssueSyncFailureKind::Network, "offline"),
+            })
+            .unwrap();
+
+        let snapshot = syncer
+            .edit_issue_at(
+                &issue_ref,
+                &IssueEditRequest {
+                    title: Some("Edited issue".to_string()),
+                    ..IssueEditRequest::default()
+                },
+                IssueSyncAuthMode::NonInteractive,
+                ts("2026-07-29T10:00:00Z"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot.issue.sync.status, IssueSyncStatus::Fresh);
+        assert_eq!(snapshot.cache.sync.status, IssueSyncStatus::Stale);
+        assert_eq!(
+            snapshot.cache.sync.failure,
+            Some(IssueSyncFailureKind::Network)
+        );
+    }
+
+    #[tokio::test]
+    async fn close_and_reopen_issue_update_cached_state() {
+        let repo = repository();
+        let issue_ref = IssueRef::new("Mr-Ples", "agent-of-empires", 14).unwrap();
+        let (syncer, _temp) = mutation_syncer(vec![
+            Ok(GitHubIssuePayload {
+                state: "closed".to_string(),
+                closed_at: Some(ts("2026-07-29T10:00:00Z")),
+                ..payload(14, "Issue")
+            }),
+            Ok(GitHubIssuePayload {
+                state: "open".to_string(),
+                closed_at: None,
+                ..payload(14, "Issue")
+            }),
+        ]);
+
+        let closed = syncer
+            .set_issue_state_at(
+                &issue_ref,
+                IssueState::Closed,
+                IssueSyncAuthMode::NonInteractive,
+                ts("2026-07-29T10:00:00Z"),
+            )
+            .await
+            .unwrap();
+        let reopened = syncer
+            .set_issue_state_at(
+                &issue_ref,
+                IssueState::Open,
+                IssueSyncAuthMode::NonInteractive,
+                ts("2026-07-29T10:01:00Z"),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(closed.issue.state, IssueState::Closed);
+        assert_eq!(reopened.issue.state, IssueState::Open);
+        let persisted = syncer.store.load(&repo).unwrap().unwrap();
+        assert_eq!(persisted.issues[0].state, IssueState::Open);
+        assert_eq!(
+            syncer.client.mutation_calls(),
+            vec![
+                "state:mr-ples/agent-of-empires#14:Closed",
+                "state:mr-ples/agent-of-empires#14:Open"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_mutation_preserves_cached_issues_as_stale() {
+        let repo = repository();
+        let issue_ref = IssueRef::new("Mr-Ples", "agent-of-empires", 14).unwrap();
+        let (syncer, _temp) = mutation_syncer(vec![Err(IssueSyncFailure::new(
+            IssueSyncFailureKind::Network,
+            "offline",
+        ))]);
+        syncer
+            .store
+            .save(&IssueSyncCache {
+                repository: repo.clone(),
+                issues: vec![payload(14, "Cached issue")
+                    .normalize(
+                        &repo.owner,
+                        &repo.repo,
+                        IssueSyncMetadata::fresh(ts("2026-07-29T09:00:00Z")),
+                    )
+                    .unwrap()],
+                sync: IssueSyncMetadata::fresh(ts("2026-07-29T09:00:00Z")),
+            })
+            .unwrap();
+
+        let err = syncer
+            .edit_issue_at(
+                &issue_ref,
+                &IssueEditRequest {
+                    title: Some("New title".to_string()),
+                    ..IssueEditRequest::default()
+                },
+                IssueSyncAuthMode::NonInteractive,
+                ts("2026-07-29T10:00:00Z"),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, IssueMutationError::GitHub { .. }));
+        let persisted = syncer.store.load(&repo).unwrap().unwrap();
+        assert_eq!(persisted.issues[0].title, "Cached issue");
+        assert_eq!(persisted.sync.status, IssueSyncStatus::Stale);
+        assert_eq!(persisted.issues[0].sync.status, IssueSyncStatus::Stale);
     }
 
     #[test]

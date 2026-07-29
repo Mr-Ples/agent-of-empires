@@ -3,9 +3,12 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
+
+pub const DEFAULT_TRIAGE_LABEL: &str = "needs-triage";
 
 /// Stable issue identity, formatted as `owner/repo#number`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -112,6 +115,12 @@ pub enum IssueNormalizeError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum IssueMutationValidationError {
+    #[error("issue title is required")]
+    MissingTitle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[error("{issue_ref} is already attached to session {holder_session_id}")]
 pub struct IssueAttachmentConflict {
     pub issue_ref: IssueRef,
@@ -130,6 +139,83 @@ pub struct IssueLabel {
     pub name: String,
     pub color: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueCreateRequest {
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub apply_default_triage_label: bool,
+}
+
+impl IssueCreateRequest {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            body: None,
+            labels: Vec::new(),
+            apply_default_triage_label: false,
+        }
+    }
+
+    pub fn validated(&self) -> Result<ValidatedIssueCreateRequest, IssueMutationValidationError> {
+        let title = normalize_required_title(&self.title)?;
+        let body = self.body.as_ref().map(|body| body.trim().to_string());
+        let labels = normalize_labels(&self.labels, self.apply_default_triage_label);
+        Ok(ValidatedIssueCreateRequest {
+            title,
+            body,
+            labels,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedIssueCreateRequest {
+    pub title: String,
+    pub body: Option<String>,
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct IssueEditRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+}
+
+impl IssueEditRequest {
+    pub fn validated(&self) -> Result<ValidatedIssueEditRequest, IssueMutationValidationError> {
+        let title = self
+            .title
+            .as_ref()
+            .map(|title| normalize_required_title(title))
+            .transpose()?;
+        let body = self.body.as_ref().map(|body| body.trim().to_string());
+        let labels = self
+            .labels
+            .as_ref()
+            .map(|labels| normalize_labels(labels, false));
+        Ok(ValidatedIssueEditRequest {
+            title,
+            body,
+            labels,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedIssueEditRequest {
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -446,6 +532,34 @@ fn normalize_color(color: Option<String>) -> Option<String> {
     })
 }
 
+fn normalize_required_title(raw: &str) -> Result<String, IssueMutationValidationError> {
+    let title = raw.trim().to_string();
+    if title.is_empty() {
+        return Err(IssueMutationValidationError::MissingTitle);
+    }
+    Ok(title)
+}
+
+fn normalize_labels(labels: &[String], apply_default_triage_label: bool) -> Vec<String> {
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+    if apply_default_triage_label {
+        normalized.push(DEFAULT_TRIAGE_LABEL.to_string());
+        seen.insert(DEFAULT_TRIAGE_LABEL.to_string());
+    }
+    for label in labels.iter().map(String::as_str) {
+        let label = label.trim();
+        if label.is_empty() {
+            continue;
+        }
+        let key = label.to_ascii_lowercase();
+        if seen.insert(key) {
+            normalized.push(label.to_string());
+        }
+    }
+    normalized
+}
+
 fn excerpt(body: &str) -> Option<String> {
     let collapsed = body.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.is_empty() {
@@ -521,6 +635,49 @@ mod tests {
         ] {
             assert!(raw.parse::<IssueRef>().is_err(), "{raw} should be invalid");
         }
+    }
+
+    #[test]
+    fn create_request_requires_title_and_applies_default_triage_label() {
+        let request = IssueCreateRequest {
+            title: "  New issue  ".to_string(),
+            body: Some("  Body  ".to_string()),
+            labels: vec![
+                "ready-for-agent".to_string(),
+                "Needs-Triage".to_string(),
+                "needs-triage".to_string(),
+                " ".to_string(),
+            ],
+            apply_default_triage_label: true,
+        };
+
+        let validated = request.validated().unwrap();
+
+        assert_eq!(validated.title, "New issue");
+        assert_eq!(validated.body.as_deref(), Some("Body"));
+        assert_eq!(validated.labels, vec!["needs-triage", "ready-for-agent"]);
+        assert!(IssueCreateRequest::new(" ").validated().is_err());
+    }
+
+    #[test]
+    fn edit_request_validates_optional_title_and_replaces_labels() {
+        let request = IssueEditRequest {
+            title: Some("  Updated  ".to_string()),
+            body: Some(" Updated body ".to_string()),
+            labels: Some(vec!["p1".to_string(), "P1".to_string(), "".to_string()]),
+        };
+
+        let validated = request.validated().unwrap();
+
+        assert_eq!(validated.title.as_deref(), Some("Updated"));
+        assert_eq!(validated.body.as_deref(), Some("Updated body"));
+        assert_eq!(validated.labels, Some(vec!["p1".to_string()]));
+        assert!(IssueEditRequest {
+            title: Some(" ".to_string()),
+            ..IssueEditRequest::default()
+        }
+        .validated()
+        .is_err());
     }
 
     #[test]
