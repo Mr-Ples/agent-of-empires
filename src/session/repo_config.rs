@@ -56,7 +56,14 @@ use super::project_mcp::ProjectMcpServer;
 /// repository execute arbitrary host commands. Host hooks are profile/global
 /// only.
 const REPO_OVERRIDABLE_SECTIONS: &[&str] = &[
-    "hooks", "session", "sandbox", "worktree", "updates", "tmux", "sound",
+    "hooks",
+    "session",
+    "sandbox",
+    "worktree",
+    "updates",
+    "tmux",
+    "sound",
+    "work_items",
 ];
 
 /// Repository-level configuration loaded from `.agent-of-empires/config.toml`.

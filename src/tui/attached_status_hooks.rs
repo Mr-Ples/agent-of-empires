@@ -178,6 +178,10 @@ fn snapshot(sessions: &[AttachedStatusHookSession]) -> Vec<StatusUpdate> {
             last_accessed_at: session.instance.last_accessed_at,
             pane_dead: session.instance.pane_dead_observed,
             live_status_baseline: session.instance.live_status_baseline,
+            runtime_liveness: session.instance.runtime_liveness,
+            runtime_needs_input: session.instance.runtime_needs_input,
+            runtime_liveness_hash: session.instance.runtime_liveness_hash.clone(),
+            runtime_liveness_changed_at: session.instance.runtime_liveness_changed_at,
         })
         .collect()
 }
@@ -214,6 +218,10 @@ mod tests {
                 last_accessed_at: None,
                 pane_dead: false,
                 live_status_baseline: None,
+                runtime_liveness: None,
+                runtime_needs_input: false,
+                runtime_liveness_hash: None,
+                runtime_liveness_changed_at: None,
             }],
             true,
         );
@@ -261,6 +269,10 @@ mod tests {
                 last_accessed_at: None,
                 pane_dead: false,
                 live_status_baseline: Some(Status::Idle),
+                runtime_liveness: None,
+                runtime_needs_input: false,
+                runtime_liveness_hash: None,
+                runtime_liveness_changed_at: None,
             }],
             false,
         );
@@ -280,6 +292,10 @@ mod tests {
                 last_accessed_at: None,
                 pane_dead: false,
                 live_status_baseline: Some(Status::Running),
+                runtime_liveness: None,
+                runtime_needs_input: false,
+                runtime_liveness_hash: None,
+                runtime_liveness_changed_at: None,
             }],
             false,
         );

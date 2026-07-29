@@ -740,6 +740,55 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_configs_work_item_prompt_pattern_maps_are_additive() {
+        let mut global = Config::default();
+        global.work_items.prompt_patterns.insert(
+            "global-approval".to_string(),
+            crate::session::WorkItemPromptPatternConfig {
+                agent: "claude".to_string(),
+                pattern: "global prompt".to_string(),
+            },
+        );
+        global
+            .work_items
+            .disabled_built_in_prompt_patterns
+            .insert("claude:approval-question".to_string(), true);
+
+        let profile = profile_from(json!({"work_items": {
+            "prompt_patterns": {
+                "project-question": {"agent": "opencode", "pattern": "project prompt"}
+            },
+            "disabled_built_in_prompt_patterns": {
+                "generic-yes-no": true
+            }
+        }}));
+
+        let merged = merge_configs(global, &profile);
+        assert!(merged
+            .work_items
+            .prompt_patterns
+            .contains_key("global-approval"));
+        assert!(merged
+            .work_items
+            .prompt_patterns
+            .contains_key("project-question"));
+        assert_eq!(
+            merged
+                .work_items
+                .disabled_built_in_prompt_patterns
+                .get("claude:approval-question"),
+            Some(&true)
+        );
+        assert_eq!(
+            merged
+                .work_items
+                .disabled_built_in_prompt_patterns
+                .get("generic-yes-no"),
+            Some(&true)
+        );
+    }
+
+    #[test]
     fn generic_merge_inherits_with_empty_overrides() {
         let mut global = Config::default();
         global.acp.max_concurrent_workers = 7;

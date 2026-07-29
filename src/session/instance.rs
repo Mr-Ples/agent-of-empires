@@ -15,6 +15,7 @@ use crate::tmux;
 
 use super::container_config;
 use super::environment::{build_docker_env_args, shell_escape};
+use super::liveness::SessionRuntimeLiveness;
 use super::poller::SessionPoller;
 
 use crate::session::capture::{
@@ -607,6 +608,17 @@ pub struct Instance {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unread: bool,
 
+    /// Session-owned runtime liveness for issue Work Item attention. Unlike
+    /// lifecycle `status`, this is derived from visible pane output movement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_liveness: Option<SessionRuntimeLiveness>,
+
+    /// Runtime liveness prompt detector result. Kept separate from lifecycle
+    /// `Status::Waiting` so issue attention can surface custom prompt matches
+    /// without changing session control behavior.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub runtime_needs_input: bool,
+
     /// Optional attachment to a GitHub Issue Work Item. The issue itself is
     /// modeled independently from the session; this field is only the durable
     /// one-to-one session attachment. Trashing, archiving, stopping, or closing
@@ -932,6 +944,10 @@ pub struct Instance {
     /// sustained-`Unknown` session should latch `Status::Error`.
     #[serde(skip)]
     pub unknown_since: Option<std::time::Instant>,
+    #[serde(skip)]
+    pub runtime_liveness_hash: Option<String>,
+    #[serde(skip)]
+    pub runtime_liveness_changed_at: Option<DateTime<Utc>>,
     #[serde(skip)]
     pub last_error: Option<String>,
     #[serde(skip)]
@@ -1313,6 +1329,8 @@ fn tmux_env_session_name_for_instance_id(instance_id: &str) -> Option<String> {
 pub(crate) struct PassiveStatusPatch {
     pub status: Status,
     pub idle_entered_at: Option<DateTime<Utc>>,
+    pub runtime_liveness: Option<SessionRuntimeLiveness>,
+    pub runtime_needs_input: bool,
     /// `None` when the source `Instance` was never touched by a user
     /// (`last_accessed_at` itself `None`); must stay `None` in that case
     /// rather than fabricating a stamp, or a session that transitions
@@ -1330,6 +1348,8 @@ impl PassiveStatusPatch {
         Self {
             status: inst.status,
             idle_entered_at: inst.idle_entered_at,
+            runtime_liveness: inst.runtime_liveness,
+            runtime_needs_input: inst.runtime_needs_input,
             last_accessed_at: inst.last_accessed_at,
         }
     }
@@ -1358,6 +1378,8 @@ impl Instance {
             favorited_at: None,
             snoozed_until: None,
             unread: false,
+            runtime_liveness: None,
+            runtime_needs_input: false,
             issue_ref: None,
             idle_dormant_since: None,
             pinned_at: None,
@@ -1397,6 +1419,8 @@ impl Instance {
             live_status_baseline: None,
             ever_confirmed_present: false,
             unknown_since: None,
+            runtime_liveness_hash: None,
+            runtime_liveness_changed_at: None,
             last_error: None,
             session_id_poller: None,
             retroactive_capture_excludes: HashSet::new(),
@@ -1699,6 +1723,8 @@ impl Instance {
     pub(crate) fn merge_passive_status_patch(&mut self, id: &str, patch: &PassiveStatusPatch) {
         self.status = patch.status;
         self.idle_entered_at = patch.idle_entered_at;
+        self.runtime_liveness = patch.runtime_liveness;
+        self.runtime_needs_input = patch.runtime_needs_input;
         let Some(incoming) = patch.last_accessed_at else {
             return;
         };
@@ -4899,6 +4925,7 @@ impl Instance {
             self.status,
             Status::Stopped | Status::Deleting | Status::Creating
         ) {
+            self.set_runtime_liveness_from_status_only();
             return;
         }
 
@@ -4909,6 +4936,7 @@ impl Instance {
         // archive/unarchive status-preserving. Rows already persisted as Error
         // by a pre-fix build are cleaned up once by the v016 migration.
         if self.is_archived() {
+            self.set_runtime_liveness_from_status_only();
             return;
         }
 
@@ -4926,12 +4954,17 @@ impl Instance {
             if self.status == Status::Error {
                 self.status = Status::Idle;
             }
+            self.runtime_liveness = None;
+            self.runtime_needs_input = false;
+            self.runtime_liveness_hash = None;
+            self.runtime_liveness_changed_at = None;
             return;
         }
 
         if self.status == Status::Error {
             if let Some(last_check) = self.last_error_check {
                 if last_check.elapsed().as_secs() < 30 {
+                    self.set_runtime_liveness_from_status_only();
                     return;
                 }
             }
@@ -4940,6 +4973,7 @@ impl Instance {
         if let Some(start_time) = self.last_start_time {
             if start_time.elapsed().as_secs() < 3 {
                 self.status = Status::Starting;
+                self.set_runtime_liveness_from_status_only();
                 return;
             }
         }
@@ -4952,6 +4986,7 @@ impl Instance {
                     self.title
                 );
                 self.status = Status::Error;
+                self.set_runtime_liveness_from_status_only();
                 if self.last_error.is_none() {
                     self.last_error = Some(
                         "Could not reach tmux. Is tmux still running on the host?".to_string(),
@@ -4971,6 +5006,7 @@ impl Instance {
                 );
                 self.unknown_since = None;
                 self.status = Status::Error;
+                self.set_runtime_liveness_from_status_only();
                 if self.last_error.is_none() {
                     self.last_error = Some(TMUX_SESSION_GONE_ERROR.to_string());
                 }
@@ -5013,6 +5049,7 @@ impl Instance {
                     self.ever_confirmed_present
                 );
                 self.status = Status::Error;
+                self.set_runtime_liveness_from_status_only();
                 if self.last_error.is_none() {
                     self.last_error = Some(TMUX_SERVER_UNREACHABLE_ERROR.to_string());
                 }
@@ -5046,9 +5083,9 @@ impl Instance {
         );
 
         let detection_tool = if self.detect_as.is_empty() {
-            &self.tool
+            self.tool.clone()
         } else {
-            &self.detect_as
+            self.detect_as.clone()
         };
 
         if let Some(hook_status) = crate::hooks::read_hook_status(&self.id) {
@@ -5058,10 +5095,11 @@ impl Instance {
                 hook_status,
                 is_dead
             );
+            let pane_content = session.capture_pane(50).unwrap_or_default();
             if is_dead {
                 self.status = Status::Error;
+                self.set_runtime_liveness_from_status_only();
                 if self.last_error.is_none() {
-                    let pane_content = session.capture_pane(20).unwrap_or_default();
                     self.last_error = Some(summarize_error_from_pane(&pane_content));
                 }
             } else {
@@ -5084,41 +5122,25 @@ impl Instance {
                     && hook_status == Status::Running;
                 let reconciles_waiting = hook_status == Status::Waiting;
                 self.status = if reconciles_running || reconciles_waiting {
-                    match session.capture_pane(50) {
-                        Ok(pane_content) => {
-                            if reconciles_waiting {
-                                tmux::reconcile_waiting_hook(detection_tool, &pane_content)
-                            } else if detection_tool == "codex" {
-                                tmux::reconcile_codex_hook_status(hook_status, &pane_content)
-                            } else {
-                                let running_age = crate::hooks::read_hook_status_age(&self.id);
-                                tmux::reconcile_claude_hook_status(
-                                    hook_status,
-                                    &pane_content,
-                                    running_age,
-                                )
-                            }
-                        }
-                        Err(e) => {
-                            tracing::trace!(
-                                "status '{}': {} hook fallback pane capture failed: {}",
-                                self.title,
-                                detection_tool,
-                                e
-                            );
-                            hook_status
-                        }
+                    if reconciles_waiting {
+                        tmux::reconcile_waiting_hook(&detection_tool, &pane_content)
+                    } else if detection_tool == "codex" {
+                        tmux::reconcile_codex_hook_status(hook_status, &pane_content)
+                    } else {
+                        let running_age = crate::hooks::read_hook_status_age(&self.id);
+                        tmux::reconcile_claude_hook_status(hook_status, &pane_content, running_age)
                     }
                 } else {
                     hook_status
                 };
+                self.update_runtime_liveness_from_pane(&pane_content, &detection_tool);
                 self.last_error = None;
             }
             return;
         }
 
         let pane_content = session.capture_pane(50).unwrap_or_default();
-        let detected = tmux::detect_status_from_content(&pane_content, detection_tool);
+        let detected = tmux::detect_status_from_content(&pane_content, &detection_tool);
         tracing::trace!(target: "session.store",
             "status '{}': detected={:?}, cmd_override={}, custom_cmd={}",
             self.title,
@@ -5181,12 +5203,55 @@ impl Instance {
         tracing::trace!(target: "session.store", "status '{}': final={:?}", self.title, self.status);
 
         if self.status == Status::Error {
+            self.set_runtime_liveness_from_status_only();
             if self.last_error.is_none() {
                 self.last_error = Some(summarize_error_from_pane(&pane_content));
             }
         } else {
+            self.update_runtime_liveness_from_pane(&pane_content, &detection_tool);
             self.last_error = None;
         }
+    }
+
+    fn update_runtime_liveness_from_pane(&mut self, pane_content: &str, detection_tool: &str) {
+        let profile = if self.source_profile.is_empty() {
+            crate::session::Config::load_or_warn().default_profile
+        } else {
+            self.source_profile.clone()
+        };
+        let config = crate::session::repo_config::resolve_config_with_repo_or_warn(
+            &profile,
+            Path::new(&self.project_path),
+        );
+        let observed = crate::session::liveness::observe_pane_text(
+            pane_content,
+            detection_tool,
+            &config.work_items,
+            self.runtime_liveness_hash.as_deref(),
+            self.runtime_liveness_changed_at,
+            Utc::now(),
+        );
+
+        self.runtime_liveness_hash = Some(observed.output_hash);
+        self.runtime_liveness_changed_at = Some(observed.changed_at);
+        self.runtime_liveness = Some(match self.status {
+            Status::Error | Status::Unknown => SessionRuntimeLiveness::Error,
+            Status::Stopped | Status::Deleting => SessionRuntimeLiveness::Stopped,
+            _ => observed.runtime_liveness,
+        });
+        self.runtime_needs_input = observed.needs_input;
+    }
+
+    fn set_runtime_liveness_from_status_only(&mut self) {
+        self.runtime_liveness = Some(match self.status {
+            Status::Error | Status::Unknown => SessionRuntimeLiveness::Error,
+            Status::Stopped | Status::Deleting => SessionRuntimeLiveness::Stopped,
+            Status::Running | Status::Starting | Status::Creating | Status::Waiting => {
+                SessionRuntimeLiveness::Active
+            }
+            Status::Idle => SessionRuntimeLiveness::Idle,
+        });
+        self.runtime_needs_input = self.status == Status::Waiting;
     }
 
     pub fn update_status(&mut self) {
@@ -6918,6 +6983,8 @@ mod tests {
         let patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: Some(now),
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: Some(now),
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &patch);
@@ -6947,6 +7014,8 @@ mod tests {
         let patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: Some(Utc::now()),
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: None,
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &patch);
@@ -6974,6 +7043,8 @@ mod tests {
         let stale_patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: Some(peer_touch - chrono::Duration::minutes(5)),
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: Some(peer_touch - chrono::Duration::minutes(5)),
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &stale_patch);
@@ -7004,6 +7075,8 @@ mod tests {
         let patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: None,
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: Some(ts),
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &patch);
@@ -7041,6 +7114,8 @@ mod tests {
         let patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: None,
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: Some(ts),
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &patch);
@@ -7068,6 +7143,8 @@ mod tests {
         let patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: None,
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: Some(newer),
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &patch);
@@ -7089,6 +7166,8 @@ mod tests {
         let patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: None,
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: Some(newer),
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &patch);
@@ -7107,6 +7186,8 @@ mod tests {
         let patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: None,
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: Some(ts),
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &patch);
@@ -7121,6 +7202,8 @@ mod tests {
         let patch = PassiveStatusPatch {
             status: Status::Idle,
             idle_entered_at: Some(ts),
+            runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+            runtime_needs_input: false,
             last_accessed_at: Some(ts),
         };
         disk.merge_passive_status_patch(&disk.id.clone(), &patch);
@@ -7142,6 +7225,8 @@ mod tests {
             &PassiveStatusPatch {
                 status: Status::Running,
                 idle_entered_at: None,
+                runtime_liveness: Some(SessionRuntimeLiveness::Active),
+                runtime_needs_input: false,
                 last_accessed_at: Some(t0),
             },
         );
@@ -7150,6 +7235,8 @@ mod tests {
             &PassiveStatusPatch {
                 status: Status::Idle,
                 idle_entered_at: Some(t1),
+                runtime_liveness: Some(SessionRuntimeLiveness::Idle),
+                runtime_needs_input: false,
                 last_accessed_at: Some(t1),
             },
         );
@@ -8062,6 +8149,8 @@ mod tests {
         inst.last_error_check = Some(std::time::Instant::now());
         inst.last_start_time = Some(std::time::Instant::now());
         inst.last_error = Some("test error".to_string());
+        inst.runtime_liveness_hash = Some("hash".to_string());
+        inst.runtime_liveness_changed_at = Some(Utc::now());
 
         let json = serde_json::to_string(&inst).unwrap();
 
@@ -8069,6 +8158,8 @@ mod tests {
         assert!(!json.contains("last_error_check"));
         assert!(!json.contains("last_start_time"));
         assert!(!json.contains("last_error"));
+        assert!(!json.contains("runtime_liveness_hash"));
+        assert!(!json.contains("runtime_liveness_changed_at"));
     }
 
     #[test]

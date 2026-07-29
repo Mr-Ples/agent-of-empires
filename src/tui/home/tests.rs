@@ -7013,6 +7013,7 @@ fn apply_status_update_propagates_idle_entered_at_into_live_instance() {
         last_accessed_at: None,
         pane_dead: false,
         live_status_baseline: None,
+        ..Default::default()
     });
 
     let inst = env.view.get_instance(&id).unwrap();
@@ -7099,6 +7100,7 @@ fn apply_status_update_preserves_idle_entered_at_on_keep() {
         last_accessed_at: None,
         pane_dead: false,
         live_status_baseline: None,
+        ..Default::default()
     });
 
     assert_eq!(
@@ -7135,6 +7137,7 @@ fn apply_status_update_persists_genuine_transition_to_disk() {
         last_accessed_at: Some(now),
         pane_dead: false,
         live_status_baseline: None,
+        ..Default::default()
     });
 
     let reloaded = Storage::new_unwatched("test").unwrap().load().unwrap();
@@ -7169,6 +7172,7 @@ fn apply_status_update_clears_idle_entered_at_on_idle_to_running() {
         last_accessed_at: None,
         pane_dead: false,
         live_status_baseline: None,
+        ..Default::default()
     });
     assert_eq!(
         env.view.get_instance(&id).unwrap().idle_entered_at,
@@ -7187,6 +7191,7 @@ fn apply_status_update_clears_idle_entered_at_on_idle_to_running() {
         last_accessed_at: None,
         pane_dead: false,
         live_status_baseline: None,
+        ..Default::default()
     });
 
     let inst = env.view.get_instance(&id).unwrap();
@@ -7285,6 +7290,7 @@ fn apply_status_update_skips_terminal_states() {
         last_accessed_at: None,
         pane_dead: false,
         live_status_baseline: None,
+        ..Default::default()
     });
 
     // Status and timestamp should both stay untouched.
@@ -7360,6 +7366,7 @@ fn apply_status_update_runs_status_hook_on_transition() {
         last_accessed_at: None,
         pane_dead: false,
         live_status_baseline: None,
+        ..Default::default()
     });
 
     let launches = take_recorded_launches();
@@ -7424,6 +7431,7 @@ fn apply_status_update_does_not_run_status_hook_for_same_status() {
         last_accessed_at: None,
         pane_dead: false,
         live_status_baseline: None,
+        ..Default::default()
     });
 
     assert!(take_recorded_launches().is_empty());
@@ -7457,6 +7465,7 @@ fn apply_status_updates_without_hooks_does_not_run_status_hook() {
             last_accessed_at: None,
             pane_dead: false,
             live_status_baseline: None,
+            ..Default::default()
         }]);
 
     assert_eq!(env.view.get_instance(&id).unwrap().status, Status::Waiting);

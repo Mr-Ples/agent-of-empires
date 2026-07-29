@@ -2516,6 +2516,8 @@ impl HomeView {
                     inst.last_error_check = prev.last_error_check;
                     inst.last_start_time = prev.last_start_time;
                     inst.session_id_poller = prev.session_id_poller.clone();
+                    inst.runtime_liveness_hash = prev.runtime_liveness_hash.clone();
+                    inst.runtime_liveness_changed_at = prev.runtime_liveness_changed_at;
                     // Carry the in-memory idle_entered_at across reloads
                     // so a freshly-stopped session doesn't lose its
                     // freshness state when the user toggles a setting
@@ -2840,7 +2842,10 @@ impl HomeView {
     fn apply_status_update(&mut self, update: StatusUpdate, play_sound: bool, run_hooks: bool) {
         use crate::session::Status;
 
-        let old_status = self.get_instance(&update.id).map(|i| i.status);
+        let old_snapshot = self
+            .get_instance(&update.id)
+            .map(|i| (i.status, i.runtime_liveness, i.runtime_needs_input));
+        let old_status = old_snapshot.as_ref().map(|s| s.0);
         let should_update = old_status.is_some_and(|s| {
             s != Status::Deleting
                 && s != Status::Creating
@@ -2858,9 +2863,20 @@ impl HomeView {
             let new_error = update.last_error;
             let new_idle_entered_at = update.idle_entered_at;
             let new_live_status_baseline = update.live_status_baseline;
+            let new_runtime_liveness = update.runtime_liveness;
+            let new_runtime_needs_input = update.runtime_needs_input;
+            let new_runtime_liveness_hash = update.runtime_liveness_hash;
+            let new_runtime_liveness_changed_at = update.runtime_liveness_changed_at;
+            let liveness_changed = old_snapshot.as_ref().is_some_and(|old| {
+                old.1 != new_runtime_liveness || old.2 != new_runtime_needs_input
+            });
             self.mutate_instance(&update.id, |inst| {
                 inst.status = new_status;
                 inst.last_error = new_error;
+                inst.runtime_liveness = new_runtime_liveness;
+                inst.runtime_needs_input = new_runtime_needs_input;
+                inst.runtime_liveness_hash = new_runtime_liveness_hash;
+                inst.runtime_liveness_changed_at = new_runtime_liveness_changed_at;
                 // Match on the producer's stated intent for `idle_entered_at`
                 // instead of overloading `None`. See `IdleIntent` in
                 // `status_poller` for the three-variant contract that
@@ -2927,6 +2943,8 @@ impl HomeView {
                             &inst, old, new_status, play_sound, run_hooks,
                         );
                     }
+                } else if liveness_changed {
+                    self.persist_passive_status_transition(&update.id, false);
                 }
             }
         } else if new_last_accessed.is_some() {
@@ -3590,6 +3608,10 @@ impl HomeView {
                         };
                         slot.last_error_check = instance.last_error_check;
                         slot.last_start_time = instance.last_start_time;
+                        slot.runtime_liveness = instance.runtime_liveness;
+                        slot.runtime_needs_input = instance.runtime_needs_input;
+                        slot.runtime_liveness_hash = instance.runtime_liveness_hash.clone();
+                        slot.runtime_liveness_changed_at = instance.runtime_liveness_changed_at;
                         slot.retroactive_capture_excludes =
                             instance.retroactive_capture_excludes.clone();
                         touched = true;

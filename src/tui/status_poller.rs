@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
+use crate::session::liveness::SessionRuntimeLiveness;
 use crate::session::{Instance, Status};
 use crate::tui::worker::Worker;
 
@@ -101,6 +102,10 @@ pub(crate) struct StatusUpdate {
     /// baseline, so the consumer applies this conditionally. `Some(_)` is
     /// unambiguous: apply it. See #2690.
     pub live_status_baseline: Option<Status>,
+    pub runtime_liveness: Option<SessionRuntimeLiveness>,
+    pub runtime_needs_input: bool,
+    pub runtime_liveness_hash: Option<String>,
+    pub runtime_liveness_changed_at: Option<DateTime<Utc>>,
 }
 
 pub(super) struct StatusPollState {
@@ -205,6 +210,10 @@ pub(super) fn poll_statuses_once(
                                 // usual sense; the Error tier itself sinks the row.
                                 pane_dead: false,
                                 live_status_baseline: Some(Status::Error),
+                                runtime_liveness: Some(SessionRuntimeLiveness::Error),
+                                runtime_needs_input: false,
+                                runtime_liveness_hash: inst.runtime_liveness_hash,
+                                runtime_liveness_changed_at: inst.runtime_liveness_changed_at,
                             });
                         }
                     }
@@ -245,6 +254,10 @@ pub(super) fn poll_statuses_once(
                 last_accessed_at: inst.last_accessed_at,
                 pane_dead,
                 live_status_baseline: inst.live_status_baseline,
+                runtime_liveness: inst.runtime_liveness,
+                runtime_needs_input: inst.runtime_needs_input,
+                runtime_liveness_hash: inst.runtime_liveness_hash,
+                runtime_liveness_changed_at: inst.runtime_liveness_changed_at,
             })
         })
         .collect()
@@ -308,6 +321,10 @@ mod tests {
             last_accessed_at: None,
             pane_dead: false,
             live_status_baseline: None,
+            runtime_liveness: None,
+            runtime_needs_input: false,
+            runtime_liveness_hash: None,
+            runtime_liveness_changed_at: None,
         };
         assert_eq!(update.idle_entered_at, IdleIntent::Set(ts));
     }

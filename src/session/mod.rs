@@ -21,6 +21,7 @@ pub mod fork;
 mod groups;
 pub mod idle_reap;
 mod instance;
+pub mod liveness;
 pub mod mcp_model;
 pub mod mcp_overrides;
 pub mod mcp_state;
@@ -52,7 +53,8 @@ pub use config::{
     validate_snooze_duration, AgentRuntimeConfig, AttachMode, CapabilityGrant, ClickAction, Config,
     ContainerRuntimeName, DefaultTerminalMode, GroupByMode, PluginConfig, RowTagMode,
     SandboxConfig, SessionConfig, TelemetryConfig, ThemeConfig, TmuxClipboardMode, TmuxMouseMode,
-    TmuxStatusBarMode, UpdatesConfig, VolumeIgnoresStrategy, WorktreeConfig,
+    TmuxStatusBarMode, UpdatesConfig, VolumeIgnoresStrategy, WorkItemPromptPatternConfig,
+    WorkItemsConfig, WorktreeConfig,
 };
 pub(crate) use environment::user_shell;
 pub use environment::{validate_env_entries, validate_env_entry};

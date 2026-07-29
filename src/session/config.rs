@@ -68,6 +68,9 @@ pub struct Config {
     #[serde(default)]
     pub logging: LoggingConfig,
 
+    #[serde(default)]
+    pub work_items: WorkItemsConfig,
+
     /// Trusted global/profile agent runtime overrides. Repo config does not
     /// merge this section, because hook installation writes durable agent files.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -116,6 +119,44 @@ pub struct AgentRuntimeConfig {
     /// defaults by event name when status hooks are installed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub status_map: BTreeMap<String, crate::agents::HookStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WorkItemPromptPatternConfig {
+    /// Built-in agent name this pattern applies to. Empty means every agent.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub agent: String,
+    /// Case-insensitive regular expression matched against visible pane text.
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkItemsConfig {
+    /// Seconds of unchanged visible tmux pane text before issue liveness is idle.
+    #[serde(default = "default_liveness_idle_after_secs")]
+    pub liveness_idle_after_secs: u64,
+
+    /// Custom prompt detector patterns keyed by stable user-owned id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub prompt_patterns: BTreeMap<String, WorkItemPromptPatternConfig>,
+
+    /// Built-in prompt detector ids to disable. Keys are id or agent:id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub disabled_built_in_prompt_patterns: BTreeMap<String, bool>,
+}
+
+fn default_liveness_idle_after_secs() -> u64 {
+    5
+}
+
+impl Default for WorkItemsConfig {
+    fn default() -> Self {
+        Self {
+            liveness_idle_after_secs: default_liveness_idle_after_secs(),
+            prompt_patterns: BTreeMap::new(),
+            disabled_built_in_prompt_patterns: BTreeMap::new(),
+        }
+    }
 }
 
 /// Configuration for one plugin: whether it is enabled, its install source and

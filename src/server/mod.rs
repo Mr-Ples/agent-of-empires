@@ -2700,6 +2700,12 @@ fn merge_runtime_fields(prior: Instance, mut fresh: Instance) -> Instance {
     }
     fresh.session_id_poller = prior.session_id_poller;
     fresh.retroactive_capture_excludes = prior.retroactive_capture_excludes;
+    if fresh.runtime_liveness_hash.is_none() {
+        fresh.runtime_liveness_hash = prior.runtime_liveness_hash;
+    }
+    if fresh.runtime_liveness_changed_at.is_none() {
+        fresh.runtime_liveness_changed_at = prior.runtime_liveness_changed_at;
+    }
     fresh
 }
 
@@ -3939,6 +3945,19 @@ async fn status_poll_loop(state: Arc<AppState>) {
             let instances = state.instances.read().await;
             instances.iter().map(|i| (i.id.clone(), i.status)).collect()
         };
+        let prev_runtime: std::collections::HashMap<
+            String,
+            (
+                Option<crate::session::liveness::SessionRuntimeLiveness>,
+                bool,
+            ),
+        > = {
+            let instances = state.instances.read().await;
+            instances
+                .iter()
+                .map(|i| (i.id.clone(), (i.runtime_liveness, i.runtime_needs_input)))
+                .collect()
+        };
 
         // GC the reconciler's persistent per-session maps against the live
         // instance set (keyed by `prev`, the full snapshot above) so a
@@ -4031,23 +4050,37 @@ async fn status_poll_loop(state: Arc<AppState>) {
                 let Some(old) = prev.get(&inst.id) else {
                     continue;
                 };
-                if *old == inst.status {
+                let status_changed = *old != inst.status;
+                let liveness_changed = prev_runtime
+                    .get(&inst.id)
+                    .is_some_and(|prev| *prev != (inst.runtime_liveness, inst.runtime_needs_input));
+                if !status_changed && !liveness_changed {
                     continue;
                 }
                 // First turn's `Running -> Idle` edge: best-effort auto-name a
                 // still-default-named terminal session. Detached and
                 // self-gating, so ineligible sessions cost only the cheap gate.
-                if *old == Status::Running && inst.status == Status::Idle {
+                if status_changed && *old == Status::Running && inst.status == Status::Idle {
                     crate::session::smart_rename::maybe_spawn_terminal_smart_rename(inst);
                 }
-                let _ = state.status_tx.send(StatusChange {
-                    instance_id: inst.id.clone(),
-                    instance_title: inst.title.clone(),
-                    old: *old,
-                    new: inst.status,
-                    at: now,
-                });
-                let decision = decide_passive_transition(inst, *old, unread_enabled);
+                if status_changed {
+                    let _ = state.status_tx.send(StatusChange {
+                        instance_id: inst.id.clone(),
+                        instance_title: inst.title.clone(),
+                        old: *old,
+                        new: inst.status,
+                        at: now,
+                    });
+                }
+                let decision = if status_changed {
+                    decide_passive_transition(inst, *old, unread_enabled)
+                } else {
+                    PassiveTransitionDecision {
+                        patch: (!inst.is_structured())
+                            .then(|| crate::session::PassiveStatusPatch::from_instance(inst)),
+                        mark_unread: false,
+                    }
+                };
                 if decision.patch.is_none() && !decision.mark_unread {
                     continue;
                 }
@@ -6816,6 +6849,8 @@ mod tests {
                 crate::session::PassiveStatusPatch {
                     status: Status::Idle,
                     idle_entered_at: None,
+                    runtime_liveness: Some(crate::session::liveness::SessionRuntimeLiveness::Idle),
+                    runtime_needs_input: false,
                     last_accessed_at: Some(new_ts),
                 },
             );
@@ -6828,6 +6863,10 @@ mod tests {
                 crate::session::PassiveStatusPatch {
                     status: Status::Running,
                     idle_entered_at: None,
+                    runtime_liveness: Some(
+                        crate::session::liveness::SessionRuntimeLiveness::Active,
+                    ),
+                    runtime_needs_input: false,
                     last_accessed_at: Some(new_ts),
                 },
             );
@@ -6968,6 +7007,9 @@ mod tests {
         let mut prior = Instance::new("seed", "/tmp/seed");
         prior.status = Status::Error;
         prior.last_error = Some("recovery cascade: foo".to_string());
+        prior.runtime_liveness_hash = Some("pane-hash".to_string());
+        let changed_at = chrono::Utc::now();
+        prior.runtime_liveness_changed_at = Some(changed_at);
 
         let mut fresh = Instance::new("seed", "/tmp/seed");
         fresh.status = Status::Error;
@@ -6975,6 +7017,8 @@ mod tests {
 
         let merged = merge_runtime_fields(prior, fresh);
         assert_eq!(merged.last_error.as_deref(), Some("recovery cascade: foo"));
+        assert_eq!(merged.runtime_liveness_hash.as_deref(), Some("pane-hash"));
+        assert_eq!(merged.runtime_liveness_changed_at, Some(changed_at));
     }
 
     // #2237: a worker coming live (AcpSessionAssigned) must clear a stale
