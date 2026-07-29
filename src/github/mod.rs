@@ -8,12 +8,18 @@
 
 pub mod client;
 pub mod error;
+pub mod issues;
 
 pub use client::{
     GitHubAsset, GitHubClient, GitHubClientConfig, GitHubCompare, GitHubCompareCommit,
     GitHubRelease, GitHubRepo,
 };
 pub use error::{GitHubError, Result};
+pub use issues::{
+    GitHubIssuePayload, IssueLabel, IssueNormalizeError, IssueRecord, IssueRef, IssueRefParseError,
+    IssueState, IssueSyncMetadata, IssueSyncStatus, PullRequestBadge, WorkItemProjection,
+    WorkItemState,
+};
 
 /// Default GitHub REST API base.
 pub const DEFAULT_GITHUB_API_BASE: &str = "https://api.github.com";
