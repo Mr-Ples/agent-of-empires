@@ -19,8 +19,12 @@ function renderDashboard(readOnly: boolean) {
   return render(
     <Dashboard
       sessions={[]}
+      projects={[]}
       onSelectSession={vi.fn()}
       onNewSession={vi.fn()}
+      onCreateFromIssue={vi.fn()}
+      onAttachIssue={vi.fn()}
+      onDetachIssue={vi.fn()}
       onCloneFromUrl={vi.fn()}
       onToggleSidebar={vi.fn()}
       readOnly={readOnly}

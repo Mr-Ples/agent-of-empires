@@ -1,21 +1,37 @@
 import { useMemo } from "react";
-import type { SessionResponse } from "../lib/types";
+import type { ProjectInfo, SessionResponse, WorkItemProjection } from "../lib/types";
 import { isSessionActive } from "../lib/session";
 import { useIdleDecayWindowMs } from "../lib/idleDecay";
 import { AOE_BRAND_MARK_COLORS, AOE_BRAND_MARK_TEXT_SHADOW } from "../lib/brandMark";
 import { TOUR_ANCHORS, type TourAnchorId } from "../lib/tourSteps";
 import { PluginCards } from "./plugin/PluginSlots";
+import { WorkItemsPanel } from "./WorkItemsPanel";
 
 interface Props {
   sessions: SessionResponse[];
+  projects: ProjectInfo[];
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
+  onCreateFromIssue: (project: ProjectInfo, item: WorkItemProjection) => void;
+  onAttachIssue: (sessionId: string, issueRef: string) => Promise<boolean>;
+  onDetachIssue: (sessionId: string) => Promise<boolean>;
   onCloneFromUrl: () => void;
   onToggleSidebar: () => void;
   readOnly?: boolean;
 }
 
-export function Dashboard({ sessions, onNewSession, onCloneFromUrl, onToggleSidebar, readOnly }: Props) {
+export function Dashboard({
+  sessions,
+  projects,
+  onSelectSession,
+  onNewSession,
+  onCreateFromIssue,
+  onAttachIssue,
+  onDetachIssue,
+  onCloneFromUrl,
+  onToggleSidebar,
+  readOnly,
+}: Props) {
   const idleDecayWindowMs = useIdleDecayWindowMs();
   const stats = useMemo(() => {
     const projects = new Set<string>();
@@ -165,6 +181,16 @@ export function Dashboard({ sessions, onNewSession, onCloneFromUrl, onToggleSide
           />
         </div>
       )}
+
+      <WorkItemsPanel
+        projects={projects}
+        sessions={sessions}
+        readOnly={readOnly}
+        onCreateFromIssue={onCreateFromIssue}
+        onSelectSession={onSelectSession}
+        onAttachIssue={onAttachIssue}
+        onDetachIssue={onDetachIssue}
+      />
 
       {/* Plugin-contributed dashboard cards (#2366). Renders nothing (and adds
           no spacing) until a plugin pushes a card. */}

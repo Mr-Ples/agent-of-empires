@@ -792,6 +792,33 @@
       ]
     },
     {
+      "id": "dashboard.work-items-issue-first",
+      "kind": "vitest",
+      "risk": "medium",
+      "specs": ["src/components/__tests__/WorkItemsPanel.test.tsx"],
+      "components": [
+        "web/src/components/WorkItemsPanel.tsx",
+        "web/src/components/Dashboard.tsx",
+        "web/src/lib/api.ts",
+        "web/src/lib/types.ts"
+      ]
+    },
+    {
+      "id": "dashboard.work-items-issue-first-live",
+      "kind": "live-playwright",
+      "risk": "medium",
+      "specs": ["tests/live/work-items-issue-first.spec.ts"],
+      "components": [
+        "web/src/components/WorkItemsPanel.tsx",
+        "web/src/components/Dashboard.tsx",
+        "web/src/lib/api.ts",
+        "web/src/lib/types.ts",
+        "src/server/api/projects.rs",
+        "src/server/api/work_items.rs",
+        "src/server/api/sessions.rs"
+      ]
+    },
+    {
       "id": "wizard.multi-repo-stale-base",
       "kind": "live-playwright",
       "risk": "high",

@@ -549,6 +549,8 @@ export interface ProjectInfo {
   name: string;
   path: string;
   scope: "global" | "profile";
+  /** Parsed owner/repo slug from the project's origin remote when available. */
+  github_repository?: string;
   /** Default base branch for new worktree branches against this project's repo. */
   default_base_branch?: string;
   /** Whether the project is pinned: shown as a sessionless sidebar header. A

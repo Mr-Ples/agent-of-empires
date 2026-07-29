@@ -22,6 +22,8 @@ pub struct ProjectResponse {
     pub path: String,
     pub scope: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_repository: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub default_base_branch: Option<String>,
     /// Whether the project shows as a sessionless sidebar header. The web
     /// derives the pin marker and empty-header visibility from this. See #2208.
@@ -32,6 +34,7 @@ impl From<Project> for ProjectResponse {
     fn from(p: Project) -> Self {
         Self {
             name: p.name,
+            github_repository: crate::git::get_remote_slug(std::path::Path::new(&p.path)),
             path: p.path,
             scope: p.scope.as_str().to_string(),
             default_base_branch: p.default_base_branch,

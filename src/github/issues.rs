@@ -909,6 +909,17 @@ mod tests {
             projection.closed[0].attached_session_id.as_deref(),
             Some("session-c")
         );
+
+        let detached_projection = project_work_items(
+            vec![open_attached.clone()],
+            std::iter::empty::<(&IssueRef, &str)>(),
+        );
+        assert_eq!(detached_projection.open.len(), 1);
+        assert_eq!(
+            detached_projection.open[0].issue_ref,
+            open_attached.issue_ref
+        );
+        assert_eq!(detached_projection.open[0].attached_session_id, None);
     }
 
     #[test]

@@ -32,8 +32,12 @@ function renderDashboard(sessions: SessionResponse[]) {
   return render(
     <Dashboard
       sessions={sessions}
+      projects={[]}
       onSelectSession={vi.fn()}
       onNewSession={vi.fn()}
+      onCreateFromIssue={vi.fn()}
+      onAttachIssue={vi.fn()}
+      onDetachIssue={vi.fn()}
       onCloneFromUrl={vi.fn()}
       onToggleSidebar={vi.fn()}
     />,

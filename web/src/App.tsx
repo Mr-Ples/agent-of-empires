@@ -72,6 +72,7 @@ import {
   trashSession,
   restoreSession,
   fetchPlugins,
+  updateSessionIssueRef,
 } from "./lib/api";
 import type { DeleteSessionOptions, ServerAbout } from "./lib/api";
 import { normalizeProjectPathKey } from "./lib/registeredProjects";
@@ -122,7 +123,7 @@ import { ThemeIntro } from "./components/onboarding/ThemeIntro";
 import type { TourScope } from "./lib/tourSteps";
 import { SessionWizard } from "./components/session-wizard/SessionWizard";
 import type { WizardPrefill } from "./components/session-wizard/SessionWizard";
-import type { ProjectInfo, RepoGroup, SessionResponse } from "./lib/types";
+import type { ProjectInfo, RepoGroup, SessionResponse, WorkItemProjection } from "./lib/types";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
 import { TokenEntryPage } from "./components/TokenEntryPage";
@@ -1088,6 +1089,60 @@ function AppContent({
     [sessions],
   );
 
+  const handleCreateIssueSession = useCallback(
+    (project: ProjectInfo, item: WorkItemProjection) => {
+      if (serverAbout?.read_only) return;
+      const projectSessions = sessions
+        .filter((s) => (s.main_repo_path || s.project_path) === project.path)
+        .sort((a, b) => (b.last_accessed_at ?? "").localeCompare(a.last_accessed_at ?? ""));
+      const latest = projectSessions[0];
+
+      setWizardPrefill({
+        path: project.path,
+        tool: latest?.tool ?? "claude",
+        yoloMode: latest?.yolo_mode ?? false,
+        sandboxEnabled: latest?.is_sandboxed ?? false,
+        profile: latest?.profile || undefined,
+        group: latest?.group_path || undefined,
+        issueRef: item.issue_ref,
+        issueTitle: item.issue.title,
+        injectIssueContext: true,
+      });
+      setShowSessionWizard(true);
+    },
+    [serverAbout?.read_only, sessions],
+  );
+
+  const handleAttachIssue = useCallback(
+    async (sessionId: string, issueRef: string) => {
+      if (serverAbout?.read_only) return false;
+      const result = await updateSessionIssueRef(sessionId, issueRef);
+      if (!result.ok || !result.session) {
+        toastBus.handler?.error(result.message ?? "Failed to attach issue");
+        return false;
+      }
+      applySession(result.session);
+      toastBus.handler?.info("Issue attached");
+      return true;
+    },
+    [applySession, serverAbout?.read_only],
+  );
+
+  const handleDetachIssue = useCallback(
+    async (sessionId: string) => {
+      if (serverAbout?.read_only) return false;
+      const result = await updateSessionIssueRef(sessionId, null);
+      if (!result.ok || !result.session) {
+        toastBus.handler?.error(result.message ?? "Failed to detach issue");
+        return false;
+      }
+      applySession(result.session);
+      toastBus.handler?.info("Issue detached");
+      return true;
+    },
+    [applySession, serverAbout?.read_only],
+  );
+
   // Pin a repo so its header persists with zero sessions. If the repo is
   // already a saved project, just set its pin flag (PATCH); otherwise register
   // it pinned (scope global, matching the TUI's global registry). Then refresh
@@ -1561,8 +1616,12 @@ function AppContent({
       return (
         <Dashboard
           sessions={sessions}
+          projects={projects}
           onSelectSession={handleSelectSession}
           onNewSession={handleNewSession}
+          onCreateFromIssue={handleCreateIssueSession}
+          onAttachIssue={handleAttachIssue}
+          onDetachIssue={handleDetachIssue}
           onCloneFromUrl={handleCloneFromUrl}
           onToggleSidebar={handleToggleSidebar}
           readOnly={serverAbout?.read_only}
