@@ -30,6 +30,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 use crate::github::error::{GitHubError, Result};
+use crate::github::GitHubIssuePayload;
 
 /// Configuration for constructing a [`GitHubClient`].
 #[derive(Debug, Clone)]
@@ -230,6 +231,18 @@ impl GitHubClient {
         );
         let response: SearchReposResponse = self.send_json(self.http.get(url)).await?;
         Ok(response.items)
+    }
+
+    /// `GET /repos/{owner}/{repo}/issues?state=all&per_page=100`
+    ///
+    /// The sync layer normalizes these payloads into the persisted issue cache.
+    /// Pagination is left to the issue-mode rollout that wires visible refresh.
+    pub async fn list_issues(&self, owner: &str, repo: &str) -> Result<Vec<GitHubIssuePayload>> {
+        let url = format!(
+            "{}/repos/{}/{}/issues?state=all&per_page=100",
+            self.api_base, owner, repo
+        );
+        self.send_json(self.http.get(url)).await
     }
 
     /// Fetch a single file's raw contents via the contents API (`Accept:

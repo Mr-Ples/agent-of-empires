@@ -9,6 +9,7 @@
 pub mod client;
 pub mod error;
 pub mod issues;
+pub mod sync;
 
 pub use client::{
     GitHubAsset, GitHubClient, GitHubClientConfig, GitHubCompare, GitHubCompareCommit,
@@ -17,8 +18,12 @@ pub use client::{
 pub use error::{GitHubError, Result};
 pub use issues::{
     GitHubIssuePayload, IssueAttachmentConflict, IssueLabel, IssueNormalizeError, IssueRecord,
-    IssueRef, IssueRefParseError, IssueState, IssueSyncMetadata, IssueSyncStatus, PullRequestBadge,
-    WorkItemProjection, WorkItemState,
+    IssueRef, IssueRefParseError, IssueState, IssueSyncFailureKind, IssueSyncMetadata,
+    IssueSyncStatus, PullRequestBadge, WorkItemProjection, WorkItemState,
+};
+pub use sync::{
+    GitHubIssueClient, IssueRepository, IssueSyncAuthMode, IssueSyncCache, IssueSyncError,
+    IssueSyncFailure, IssueSyncSnapshot, IssueSyncStore, IssueSyncer,
 };
 
 /// Default GitHub REST API base.

@@ -137,7 +137,7 @@ pub struct PullRequestBadge {
     pub merged_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueSyncStatus {
     Fresh,
@@ -155,6 +155,8 @@ pub struct IssueSyncMetadata {
     pub status: IssueSyncStatus,
     pub synced_at: Option<DateTime<Utc>>,
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<IssueSyncFailureKind>,
 }
 
 impl IssueSyncMetadata {
@@ -163,6 +165,7 @@ impl IssueSyncMetadata {
             status: IssueSyncStatus::Fresh,
             synced_at: Some(synced_at),
             message: None,
+            failure: None,
         }
     }
 
@@ -171,8 +174,45 @@ impl IssueSyncMetadata {
             status,
             synced_at: None,
             message: Some(message.into()),
+            failure: status.failure_kind(),
         }
     }
+
+    pub fn stale(failure: IssueSyncFailureKind, message: impl Into<String>) -> Self {
+        Self {
+            status: IssueSyncStatus::Stale,
+            synced_at: None,
+            message: Some(message.into()),
+            failure: Some(failure),
+        }
+    }
+}
+
+impl IssueSyncStatus {
+    pub fn failure_kind(self) -> Option<IssueSyncFailureKind> {
+        match self {
+            IssueSyncStatus::Fresh | IssueSyncStatus::Stale => None,
+            IssueSyncStatus::AuthRequired => {
+                Some(IssueSyncFailureKind::AuthRequired { interactive: false })
+            }
+            IssueSyncStatus::RateLimited => Some(IssueSyncFailureKind::RateLimited),
+            IssueSyncStatus::Forbidden => Some(IssueSyncFailureKind::Forbidden),
+            IssueSyncStatus::NotFound => Some(IssueSyncFailureKind::NotFound),
+            IssueSyncStatus::Network => Some(IssueSyncFailureKind::Network),
+            IssueSyncStatus::ApiFailure => Some(IssueSyncFailureKind::ApiFailure),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IssueSyncFailureKind {
+    AuthRequired { interactive: bool },
+    Forbidden,
+    NotFound,
+    Network,
+    RateLimited,
+    ApiFailure,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
