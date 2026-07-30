@@ -9655,6 +9655,107 @@ fn project_mode_shows_work_item_project_without_sessions() {
 
 #[test]
 #[serial]
+fn issues_mode_scopes_work_items_to_active_project_and_collapses_closed() {
+    use crate::session::{config::GroupByMode, Project, ProjectScope};
+
+    let mut env = create_test_env_empty();
+    env.view.group_by = GroupByMode::Issues;
+    env.view.registered_projects =
+        vec![Project::new("alpha", "/repos/alpha", ProjectScope::Global)];
+    env.view.project_issue_states.insert(
+        "/repos/alpha".to_string(),
+        super::ProjectIssueReadState::Ready {
+            repository: crate::github::IssueRepository::new("mr-ples", "agent-of-empires").unwrap(),
+            sync: crate::github::IssueSyncMetadata::fresh(chrono::Utc::now()),
+        },
+    );
+    let mut closed = github_work_item("mr-ples/agent-of-empires#9", "Closed bug");
+    closed.state = crate::github::WorkItemState::Closed;
+    closed.issue.state = crate::github::IssueState::Closed;
+    env.view.project_work_items = vec![
+        super::ProjectWorkItem {
+            project_label: "alpha".to_string(),
+            project_path: "/repos/alpha".to_string(),
+            item: github_work_item("mr-ples/agent-of-empires#17", "Open issue"),
+        },
+        super::ProjectWorkItem {
+            project_label: "alpha".to_string(),
+            project_path: "/repos/alpha".to_string(),
+            item: closed,
+        },
+    ];
+
+    env.view.flat_items = env.view.build_flat_items();
+
+    assert!(matches!(
+        env.view.flat_items.first(),
+        Some(Item::Group { name, session_count, .. })
+            if name == "Issues: alpha" && *session_count == 1
+    ));
+    assert!(matches!(
+        env.view.flat_items.get(1),
+        Some(Item::WorkItem { item, .. }) if item.issue_ref.number() == 17
+    ));
+    assert!(matches!(
+        env.view.flat_items.get(2),
+        Some(Item::Group { name, collapsed, session_count, .. })
+            if name == "Closed issues" && *collapsed && *session_count == 1
+    ));
+
+    env.view.issues_closed_collapsed = false;
+    env.view.flat_items = env.view.build_flat_items();
+    assert!(matches!(
+        env.view.flat_items.get(3),
+        Some(Item::WorkItem { item, .. }) if item.issue_ref.number() == 9
+    ));
+}
+
+#[test]
+#[serial]
+fn issues_mode_explains_missing_project_registration() {
+    use crate::session::config::GroupByMode;
+
+    let mut env = create_test_env_empty();
+    env.view.group_by = GroupByMode::Issues;
+    env.view.flat_items = env.view.build_flat_items();
+
+    assert!(matches!(
+        env.view.flat_items.first(),
+        Some(Item::Group { name, .. })
+            if name.contains("register a GitHub project before using Issues")
+    ));
+}
+
+#[test]
+#[serial]
+fn attached_work_item_selects_attached_session_for_preview() {
+    let mut env = create_test_env_two_projects_mixed_attention();
+    let attached_id = env
+        .view
+        .instances
+        .values()
+        .find(|inst| inst.title == "alpha-waiting")
+        .map(|inst| inst.id.clone())
+        .expect("alpha waiting session");
+    let mut item = github_work_item("mr-ples/agent-of-empires#17", "Open issue");
+    item.attached_session_id = Some(attached_id.clone());
+    env.view.flat_items = vec![Item::WorkItem {
+        project_path: "/repos/alpha".to_string(),
+        item: Box::new(item),
+        depth: 0,
+    }];
+    env.view.cursor = 0;
+
+    env.view.update_selected();
+
+    assert_eq!(
+        env.view.selected_session.as_deref(),
+        Some(attached_id.as_str())
+    );
+}
+
+#[test]
+#[serial]
 fn n_on_work_item_prefills_issue_session_defaults() {
     use crate::session::config::GroupByMode;
 

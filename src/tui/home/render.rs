@@ -48,6 +48,8 @@ fn compose_list_title(
     let mut suffix = String::new();
     if group_by == GroupByMode::Project {
         suffix.push_str(" · project");
+    } else if group_by == GroupByMode::Issues {
+        suffix.push_str(" · issues");
     }
     if sort_order != SortOrder::default() {
         suffix.push_str(" · ");
@@ -1437,8 +1439,37 @@ impl HomeView {
                 (icon, text, style)
             }
             Item::WorkItem { item, .. } => {
-                let text = Cow::Owned(format!("#{} {}", item.issue_ref.number(), item.title));
-                ("#", text, Style::default().fg(theme.accent))
+                let mut parts = vec![format!("{} {}", item.issue_ref, item.title)];
+                if !item.labels.is_empty() {
+                    let labels = item
+                        .labels
+                        .iter()
+                        .map(|label| label.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    parts.push(format!("[{labels}]"));
+                }
+                if item.pull_request.is_some() {
+                    parts.push("[PR]".to_string());
+                }
+                if item.attached_session_id.is_some() {
+                    parts.push("[attached]".to_string());
+                }
+                if item.sync.status == crate::github::IssueSyncStatus::Stale {
+                    parts.push("[stale]".to_string());
+                }
+                let attention = item.attention_state.map(|state| match state {
+                    crate::github::AttentionState::NeedsInput => ("!", theme.waiting),
+                    crate::github::AttentionState::Error => ("x", theme.error),
+                    crate::github::AttentionState::Idle => ("o", theme.idle),
+                    crate::github::AttentionState::Active => ("*", theme.running),
+                    crate::github::AttentionState::Stopped => ("-", theme.dimmed),
+                });
+                let icon = attention.map_or("#", |(icon, _)| icon);
+                let style = attention
+                    .map(|(_, color)| Style::default().fg(color))
+                    .unwrap_or_else(|| Style::default().fg(theme.accent));
+                (icon, Cow::Owned(parts.join(" ")), style)
             }
             Item::Session { id, .. } => {
                 if let Some(inst) = self.get_instance(id) {
@@ -2789,6 +2820,49 @@ impl HomeView {
                                 self.show_preview_info,
                             );
                         }
+                    } else if let Some(Item::WorkItem { item, .. }) =
+                        self.flat_items.get(self.cursor)
+                    {
+                        let mut lines = vec![
+                            Line::from(Span::styled(
+                                item.title.clone(),
+                                Style::default().fg(theme.title).bold(),
+                            )),
+                            Line::from(Span::styled(
+                                item.issue_ref.to_string(),
+                                Style::default().fg(theme.dimmed),
+                            )),
+                            Line::from(Span::raw("")),
+                        ];
+                        if !item.labels.is_empty() {
+                            lines.push(Line::from(format!(
+                                "Labels: {}",
+                                item.labels
+                                    .iter()
+                                    .map(|label| label.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )));
+                        }
+                        if item.pull_request.is_some() {
+                            lines.push(Line::from("Pull request: yes"));
+                        }
+                        lines.push(Line::from(format!("URL: {}", item.url)));
+                        if item.sync.status != crate::github::IssueSyncStatus::Fresh {
+                            lines.push(Line::from(format!("Sync: {:?}", item.sync.status)));
+                            if let Some(message) = &item.sync.message {
+                                lines.push(Line::from(message.clone()));
+                            }
+                        }
+                        if let Some(body) = item.issue.excerpt.as_ref().or(item.issue.body.as_ref())
+                        {
+                            lines.push(Line::from(Span::raw("")));
+                            lines.extend(body.lines().map(|line| Line::from(line.to_string())));
+                        }
+                        let preview = Paragraph::new(Text::from(lines))
+                            .style(Style::default().fg(theme.text))
+                            .wrap(Wrap { trim: false });
+                        frame.render_widget(preview, inner);
                     } else {
                         let hint = Paragraph::new("Select a session to preview")
                             .style(Style::default().fg(theme.dimmed))

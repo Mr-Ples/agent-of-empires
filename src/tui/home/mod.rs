@@ -256,6 +256,19 @@ pub(super) struct ProjectWorkItem {
     pub(super) item: crate::github::WorkItemProjection,
 }
 
+#[derive(Debug, Clone)]
+pub(super) enum ProjectIssueReadState {
+    Ready {
+        repository: crate::github::IssueRepository,
+        sync: crate::github::IssueSyncMetadata,
+    },
+    MissingRemote,
+    MissingCache {
+        repository: crate::github::IssueRepository,
+    },
+    LoadFailed(String),
+}
+
 /// View mode for the home screen
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ViewMode {
@@ -494,6 +507,8 @@ pub struct HomeView {
     /// on-disk issue sync cache. The TUI stays offline here; refreshes happen
     /// through the normal GitHub sync paths and the home view projects reload.
     pub(super) project_work_items: Vec<ProjectWorkItem>,
+    pub(super) project_issue_states: HashMap<String, ProjectIssueReadState>,
+    pub(super) issues_closed_collapsed: bool,
 
     // Dialogs
     pub(super) show_help: bool,
@@ -2139,6 +2154,8 @@ impl HomeView {
                 .unwrap_or_default(),
             registered_projects: Vec::new(),
             project_work_items: Vec::new(),
+            project_issue_states: HashMap::new(),
+            issues_closed_collapsed: true,
             show_help: false,
             help_scroll: 0,
             new_dialog: None,
@@ -4799,6 +4816,10 @@ impl HomeView {
     }
 
     pub(super) fn build_flat_items(&self) -> Vec<Item> {
+        if self.group_by == GroupByMode::Issues {
+            return self.build_flat_items_by_issues();
+        }
+
         // Project grouping is honored across every sort order. Combined with
         // Attention sort, sessions sort by tier within each project and the
         // project headers float by their top-attention member (driven by
@@ -4845,6 +4866,161 @@ impl HomeView {
         // Trash sits below Archived, also pinned to the bottom.
         append_trash_section(&mut items, &archive_pool, self.trashed_section_collapsed);
         items
+    }
+
+    fn build_flat_items_by_issues(&self) -> Vec<Item> {
+        let Some(project) = self.active_issue_project() else {
+            return vec![Item::Group {
+                path: "__issues_setup_missing_project".to_string(),
+                name: "Setup: register a GitHub project before using Issues".to_string(),
+                depth: 0,
+                collapsed: true,
+                session_count: 0,
+                profile: None,
+                archived_at: None,
+            }];
+        };
+
+        let project_label = crate::session::projects::repo_label(&project.path);
+        let mut open: Vec<_> = self
+            .project_work_items
+            .iter()
+            .filter(|work_item| work_item.project_path == project.path)
+            .filter(|work_item| work_item.item.state == crate::github::WorkItemState::Open)
+            .cloned()
+            .collect();
+        let mut closed: Vec<_> = self
+            .project_work_items
+            .iter()
+            .filter(|work_item| work_item.project_path == project.path)
+            .filter(|work_item| work_item.item.state == crate::github::WorkItemState::Closed)
+            .cloned()
+            .collect();
+        open.sort_by(|a, b| a.item.issue_ref.cmp(&b.item.issue_ref));
+        closed.sort_by(|a, b| a.item.issue_ref.cmp(&b.item.issue_ref));
+
+        let mut items = vec![Item::Group {
+            path: format!("__issues_project:{}", project.path),
+            name: format!("Issues: {project_label}"),
+            depth: 0,
+            collapsed: false,
+            session_count: open.len(),
+            profile: None,
+            archived_at: None,
+        }];
+
+        if let Some(notice) = self.issue_mode_notice_for_project(project) {
+            items.push(Item::Group {
+                path: format!("__issues_notice:{}", project.path),
+                name: notice,
+                depth: 1,
+                collapsed: true,
+                session_count: 0,
+                profile: None,
+                archived_at: None,
+            });
+        }
+
+        for work_item in open {
+            items.push(Item::WorkItem {
+                project_path: work_item.project_path,
+                item: Box::new(work_item.item),
+                depth: 1,
+            });
+        }
+
+        if !closed.is_empty() {
+            items.push(Item::Group {
+                path: format!("__issues_closed:{}", project.path),
+                name: "Closed issues".to_string(),
+                depth: 0,
+                collapsed: self.issues_closed_collapsed,
+                session_count: closed.len(),
+                profile: None,
+                archived_at: None,
+            });
+            if !self.issues_closed_collapsed {
+                for work_item in closed {
+                    items.push(Item::WorkItem {
+                        project_path: work_item.project_path,
+                        item: Box::new(work_item.item),
+                        depth: 1,
+                    });
+                }
+            }
+        }
+
+        items
+    }
+
+    fn active_issue_project(&self) -> Option<&crate::session::Project> {
+        if let Some(selected_id) = &self.selected_session {
+            if let Some(inst) = self.get_instance(selected_id) {
+                if let Some(project) = self.registered_projects.iter().find(|project| {
+                    crate::session::projects::canonical_key(&project.path)
+                        == crate::session::projects::canonical_key(&inst.project_path)
+                }) {
+                    return Some(project);
+                }
+            }
+        }
+
+        self.registered_projects.first()
+    }
+
+    fn issue_mode_notice_for_project(&self, project: &crate::session::Project) -> Option<String> {
+        let Some(state) = self.project_issue_states.get(&project.path) else {
+            return Some(format!(
+                "Setup: issue cache unavailable for {}; sync the project first",
+                crate::session::projects::repo_label(&project.path)
+            ));
+        };
+        match state {
+            ProjectIssueReadState::Ready { repository, sync } => match sync.status {
+                crate::github::IssueSyncStatus::Fresh => None,
+                crate::github::IssueSyncStatus::Stale => Some(format!(
+                    "Stale: {}",
+                    sync.message
+                        .as_deref()
+                        .unwrap_or("using cached issues from the last successful sync")
+                )),
+                crate::github::IssueSyncStatus::AuthRequired => Some(format!(
+                    "Setup: GitHub auth required for {}/{}",
+                    repository.owner, repository.repo
+                )),
+                crate::github::IssueSyncStatus::Forbidden => Some(format!(
+                    "Failure: GitHub token lacks access to {}/{}",
+                    repository.owner, repository.repo
+                )),
+                crate::github::IssueSyncStatus::NotFound => Some(format!(
+                    "Failure: GitHub repository {}/{} was not found",
+                    repository.owner, repository.repo
+                )),
+                crate::github::IssueSyncStatus::Network => Some(format!(
+                    "Failure: network error syncing {}/{}",
+                    repository.owner, repository.repo
+                )),
+                crate::github::IssueSyncStatus::RateLimited => Some(format!(
+                    "Failure: GitHub rate limit while syncing {}/{}",
+                    repository.owner, repository.repo
+                )),
+                crate::github::IssueSyncStatus::ApiFailure => Some(format!(
+                    "Failure: GitHub issue sync failed for {}/{}",
+                    repository.owner, repository.repo
+                )),
+            },
+            ProjectIssueReadState::MissingRemote => Some(format!(
+                "Setup: {} has no GitHub remote",
+                crate::session::projects::repo_label(&project.path)
+            )),
+            ProjectIssueReadState::MissingCache { repository } => Some(format!(
+                "Setup: no cached issues for {}/{}; sync the project first",
+                repository.owner, repository.repo
+            )),
+            ProjectIssueReadState::LoadFailed(message) => {
+                Some(format!("Failure: failed to load cached issues: {message}"))
+            }
+        }
     }
 
     fn build_flat_items_by_project(&self) -> Vec<Item> {
@@ -4952,6 +5128,7 @@ impl HomeView {
                 .project_work_items
                 .iter()
                 .filter(|work_item| work_item.project_label == *path)
+                .filter(|work_item| work_item.item.state == crate::github::WorkItemState::Open)
                 .filter(|work_item| work_item.item.attached_session_id.is_none())
                 .filter(|work_item| !self.issue_ref_is_attached(&work_item.item.issue_ref))
             {
@@ -6570,49 +6747,90 @@ impl HomeView {
 
     fn refresh_project_work_items(&mut self) {
         use crate::github::{
-            issue_sync_cache_dir, project_work_items, IssueRepository, IssueSyncStore,
+            issue_sync_cache_dir, project_work_items_with_attention, AttentionInputs,
+            IssueRepository, IssueSyncStore, WorkItemSessionAttachment,
         };
 
         let Ok(app_dir) = crate::session::get_app_dir() else {
             self.project_work_items.clear();
+            self.project_issue_states.clear();
             return;
         };
         let store = IssueSyncStore::new(issue_sync_cache_dir(app_dir));
-        let attachments: Vec<(&crate::github::IssueRef, &str)> = self
+        let attachments: Vec<WorkItemSessionAttachment> = self
             .instances
             .values()
             .filter_map(|inst| {
                 inst.issue_ref
                     .as_ref()
-                    .map(|issue_ref| (issue_ref, inst.id.as_str()))
+                    .map(|issue_ref| WorkItemSessionAttachment {
+                        issue_ref: issue_ref.clone(),
+                        session_id: inst.id.clone(),
+                        attention: AttentionInputs {
+                            runtime_liveness: inst
+                                .runtime_liveness
+                                .map(Self::runtime_liveness_from_session)
+                                .unwrap_or_else(|| Self::runtime_liveness_from_status(inst.status)),
+                            lifecycle_needs_input: inst.status == crate::session::Status::Waiting
+                                || inst.runtime_needs_input,
+                            structured_needs_input: false,
+                        },
+                    })
             })
             .collect();
-        let mut seen_repos = std::collections::HashSet::new();
         let mut out = Vec::new();
+        let mut states = HashMap::new();
 
         for project in &self.registered_projects {
             let Some(slug) = crate::git::get_remote_slug(std::path::Path::new(&project.path))
             else {
+                states.insert(project.path.clone(), ProjectIssueReadState::MissingRemote);
                 continue;
             };
             let Some((owner, repo)) = slug.split_once('/') else {
+                states.insert(project.path.clone(), ProjectIssueReadState::MissingRemote);
                 continue;
             };
-            if !seen_repos.insert(slug.clone()) {
-                continue;
-            }
             let Ok(repository) = IssueRepository::new(owner, repo) else {
+                states.insert(project.path.clone(), ProjectIssueReadState::MissingRemote);
                 continue;
             };
-            let Ok(Some(cache)) = store.load(&repository) else {
-                continue;
+            let cache = match store.load(&repository) {
+                Ok(Some(cache)) => cache,
+                Ok(None) => {
+                    states.insert(
+                        project.path.clone(),
+                        ProjectIssueReadState::MissingCache { repository },
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    states.insert(
+                        project.path.clone(),
+                        ProjectIssueReadState::LoadFailed(error.to_string()),
+                    );
+                    continue;
+                }
             };
-            let projection = project_work_items(cache.issues, attachments.iter().copied());
-            out.extend(projection.open.into_iter().map(|item| ProjectWorkItem {
-                project_label: crate::session::projects::repo_label(&project.path),
-                project_path: project.path.clone(),
-                item,
-            }));
+            states.insert(
+                project.path.clone(),
+                ProjectIssueReadState::Ready {
+                    repository,
+                    sync: cache.sync.clone(),
+                },
+            );
+            let projection = project_work_items_with_attention(cache.issues, attachments.clone());
+            out.extend(
+                projection
+                    .open
+                    .into_iter()
+                    .chain(projection.closed.into_iter())
+                    .map(|item| ProjectWorkItem {
+                        project_label: crate::session::projects::repo_label(&project.path),
+                        project_path: project.path.clone(),
+                        item,
+                    }),
+            );
         }
 
         out.sort_by(|a, b| {
@@ -6621,6 +6839,44 @@ impl HomeView {
                 .then_with(|| a.item.issue_ref.cmp(&b.item.issue_ref))
         });
         self.project_work_items = out;
+        self.project_issue_states = states;
+    }
+
+    fn runtime_liveness_from_session(
+        value: crate::session::liveness::SessionRuntimeLiveness,
+    ) -> crate::github::RuntimeLiveness {
+        match value {
+            crate::session::liveness::SessionRuntimeLiveness::Active => {
+                crate::github::RuntimeLiveness::Active
+            }
+            crate::session::liveness::SessionRuntimeLiveness::Idle => {
+                crate::github::RuntimeLiveness::Idle
+            }
+            crate::session::liveness::SessionRuntimeLiveness::Stopped => {
+                crate::github::RuntimeLiveness::Stopped
+            }
+            crate::session::liveness::SessionRuntimeLiveness::Error => {
+                crate::github::RuntimeLiveness::Error
+            }
+        }
+    }
+
+    fn runtime_liveness_from_status(
+        status: crate::session::Status,
+    ) -> crate::github::RuntimeLiveness {
+        match status {
+            crate::session::Status::Running
+            | crate::session::Status::Waiting
+            | crate::session::Status::Starting
+            | crate::session::Status::Creating => crate::github::RuntimeLiveness::Active,
+            crate::session::Status::Idle | crate::session::Status::Unknown => {
+                crate::github::RuntimeLiveness::Idle
+            }
+            crate::session::Status::Stopped | crate::session::Status::Deleting => {
+                crate::github::RuntimeLiveness::Stopped
+            }
+            crate::session::Status::Error => crate::github::RuntimeLiveness::Error,
+        }
     }
 
     /// The canonical repo path of the first live (non-archived) session under
@@ -6794,6 +7050,7 @@ impl HomeView {
         };
         let group_path = match self.group_by {
             GroupByMode::Project => Some(project_group_name(inst)),
+            GroupByMode::Issues => None,
             GroupByMode::Manual => {
                 let p = inst.group_path.clone();
                 if p.is_empty() {
@@ -6812,6 +7069,7 @@ impl HomeView {
                 GroupByMode::Project => {
                     self.project_group_collapsed.insert(gpath, false);
                 }
+                GroupByMode::Issues => {}
                 GroupByMode::Manual => {
                     if let Some(tree) = self.group_trees.get_mut(&target_profile) {
                         tree.set_collapsed(&gpath, false);

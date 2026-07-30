@@ -4122,8 +4122,11 @@ impl HomeView {
                     self.selected_group = None;
                     self.selected_group_profile = None;
                 }
-                Item::WorkItem { .. } => {
-                    self.selected_session = None;
+                Item::WorkItem { item, .. } => {
+                    self.selected_session = item
+                        .attached_session_id
+                        .clone()
+                        .filter(|id| self.instances.contains_key(id));
                     self.selected_group = None;
                     self.selected_group_profile = None;
                 }
@@ -4233,6 +4236,14 @@ impl HomeView {
         }
         if crate::session::is_trash_section_path(path) {
             self.toggle_trashed_section();
+            return;
+        }
+        if self.group_by == GroupByMode::Issues && path.starts_with("__issues_closed:") {
+            self.issues_closed_collapsed = !self.issues_closed_collapsed;
+            self.rebuild_flat_items();
+            return;
+        }
+        if self.group_by == GroupByMode::Issues && path.starts_with("__issues_") {
             return;
         }
         if self.group_by == GroupByMode::Project {
@@ -5470,10 +5481,13 @@ impl HomeView {
                     }
                     self.activate_selected_session()
                 }
-                Item::WorkItem { .. } => {
+                Item::WorkItem { item, .. } => {
                     if self.cursor != abs_idx {
                         self.cursor = abs_idx;
                         self.update_selected();
+                    }
+                    if item.attached_session_id.is_some() && self.selected_session.is_some() {
+                        return self.activate_selected_session();
                     }
                     self.open_new_session_dialog();
                     None

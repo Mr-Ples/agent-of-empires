@@ -1889,6 +1889,7 @@ impl HomeView {
                 .filter(|i| super::project_group_name(i) == group_path)
                 .map(|i| i.id.clone())
                 .collect(),
+            crate::session::config::GroupByMode::Issues => Vec::new(),
             // Manual groups can nest, so a session belongs when its path
             // matches exactly or sits beneath the group. Scope to the group's
             // owning profile the same way `delete_selected_group` does.

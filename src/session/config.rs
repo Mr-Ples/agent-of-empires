@@ -665,13 +665,15 @@ pub enum GroupByMode {
     #[default]
     Manual,
     Project,
+    Issues,
 }
 
 impl GroupByMode {
     pub fn cycle(self) -> Self {
         match self {
             GroupByMode::Manual => GroupByMode::Project,
-            GroupByMode::Project => GroupByMode::Manual,
+            GroupByMode::Project => GroupByMode::Issues,
+            GroupByMode::Issues => GroupByMode::Manual,
         }
     }
 
@@ -679,6 +681,7 @@ impl GroupByMode {
         match self {
             GroupByMode::Manual => "Manual",
             GroupByMode::Project => "Project",
+            GroupByMode::Issues => "Issues",
         }
     }
 }
