@@ -68,6 +68,10 @@ pub struct Config {
     #[serde(default)]
     pub logging: LoggingConfig,
 
+    /// Command launched by `aoe repl` when no `--cmd` override is supplied.
+    #[serde(default)]
+    pub repl: ReplConfig,
+
     #[serde(default)]
     pub work_items: WorkItemsConfig,
 
@@ -119,6 +123,32 @@ pub struct AgentRuntimeConfig {
     /// defaults by event name when status hooks are installed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub status_map: BTreeMap<String, crate::agents::HookStatus>,
+}
+
+/// Raw interactive agent command used by `aoe repl`.
+#[derive(Debug, Clone, Serialize, Deserialize, SettingsSection)]
+#[setting_section(name = "repl", category = "Agent")]
+pub struct ReplConfig {
+    /// Shell-style command and arguments for the default REPL agent.
+    #[serde(default = "default_repl_command")]
+    #[setting(
+        label = "REPL command",
+        widget = "text",
+        web = "local_only:executes a host command"
+    )]
+    pub command: String,
+}
+
+impl Default for ReplConfig {
+    fn default() -> Self {
+        Self {
+            command: default_repl_command(),
+        }
+    }
+}
+
+fn default_repl_command() -> String {
+    "codex -s danger-full-access".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
