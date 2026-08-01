@@ -35,8 +35,17 @@ pub struct DeletionResult {
 }
 
 pub fn perform_deletion(request: &DeletionRequest) -> DeletionResult {
-    perform_deletion_with(request, |session_id| {
-        DockerContainer::from_session_id(session_id).teardown(session_id)
+    let container_name = request
+        .instance
+        .sandbox_info
+        .as_ref()
+        .map(|sandbox| sandbox.container_name.clone());
+    perform_deletion_with(request, move |session_id| {
+        let container = container_name
+            .as_deref()
+            .map(DockerContainer::from_name)
+            .unwrap_or_else(|| DockerContainer::from_session_id(session_id));
+        container.teardown(session_id)
     })
 }
 

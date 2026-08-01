@@ -9815,7 +9815,7 @@ fn n_on_work_item_prefills_issue_session_defaults() {
     assert_eq!(dialog.title_value(), "#17 Support issue-first sessions");
     assert_eq!(
         dialog.worktree_branch_value(),
-        "issue-mr-ples-agent-of-empires-17"
+        "17-support-issue-first-sessions"
     );
     assert_eq!(
         dialog.issue_ref_value().map(ToString::to_string),

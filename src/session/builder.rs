@@ -11,6 +11,7 @@ use chrono::Utc;
 use crate::containers;
 use crate::git::error::GitError;
 use crate::git::GitWorktree;
+use crate::git::open_repo_at;
 
 use super::{
     civilizations, Config, Instance, SandboxInfo, WorkspaceInfo, WorkspaceRepo, WorktreeInfo,
@@ -90,6 +91,31 @@ fn normalize_base(s: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn branch_exists_on_remote(repo_path: &std::path::Path, branch: &str) -> bool {
+    let Ok(repo) = open_repo_at(repo_path) else {
+        return false;
+    };
+    repo.branches(Some(git2::BranchType::Remote))
+        .ok()
+        .map(|branches| {
+            branches.filter_map(Result::ok).any(|(branch_ref, _)| {
+                branch_ref
+                    .name()
+                    .ok()
+                    .flatten()
+                    .is_some_and(|name| name.ends_with(&format!("/{branch}")))
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Return the checked-out branch when it is a named branch represented on a
+/// remote. Detached or local-only branches are not safe implicit bases.
+pub(crate) fn current_branch_if_safe(repo_path: &std::path::Path) -> Option<String> {
+    let branch = GitWorktree::get_current_branch(repo_path).ok()?;
+    branch_exists_on_remote(repo_path, &branch).then_some(branch)
+}
+
 /// Resolve a repo's effective base branch with precedence:
 /// explicit session base > per-project default > global/profile default.
 /// `None` means "auto-detect the repo's default branch".
@@ -97,10 +123,12 @@ pub(crate) fn resolve_base_branch(
     session: Option<&str>,
     project: Option<&str>,
     global: Option<&str>,
+    current_branch: Option<&str>,
 ) -> Option<String> {
     normalize_base(session)
         .or_else(|| normalize_base(project))
         .or_else(|| normalize_base(global))
+        .or_else(|| current_branch.map(str::to_string))
 }
 
 /// Resolve one repo's effective base branch, consulting its registered
@@ -113,12 +141,13 @@ fn resolve_repo_base_branch(
     session: Option<&str>,
     project_bases: &std::collections::HashMap<String, String>,
     global: Option<&str>,
+    current_branch: Option<&str>,
 ) -> Option<String> {
     let main_repo =
         GitWorktree::find_main_repo(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
     let key = crate::session::projects::canonical_key(&main_repo.to_string_lossy());
     let project = project_bases.get(&key).map(String::as_str);
-    resolve_base_branch(session, project, global)
+    resolve_base_branch(session, project, global, current_branch)
 }
 
 /// Map of canonical repo path to configured default base branch for every
@@ -488,6 +517,11 @@ pub fn build_instance(
             let session_base = params.base_branch.as_deref();
             let global_default = config.worktree.default_base_branch.as_deref();
             let project_bases = project_base_branches(profile);
+            let primary_current_branch = if session_base.is_none() && params.issue_ref.is_some() {
+                current_branch_if_safe(&primary_path)
+            } else {
+                None
+            };
 
             // Every repo, including the launch repo, forks from its own
             // registered per-project default when no explicit session base is
@@ -499,6 +533,7 @@ pub fn build_instance(
                     session_base,
                     &project_bases,
                     global_default,
+                    primary_current_branch.as_deref(),
                 ),
                 path: primary_path,
             };
@@ -507,12 +542,19 @@ pub fn build_instance(
                 .iter()
                 .map(|p| {
                     let path = PathBuf::from(p);
+                    let current_branch =
+                        if session_base.is_none() && params.issue_ref.is_some() {
+                            current_branch_if_safe(&path)
+                        } else {
+                            None
+                        };
                     WorkspaceRepoSpec {
                         base_branch: resolve_repo_base_branch(
                             &path,
                             session_base,
                             &project_bases,
                             global_default,
+                            current_branch.as_deref(),
                         ),
                         path,
                     }
@@ -609,11 +651,18 @@ pub fn build_instance(
                 // when no explicit session base is given (then global/profile,
                 // then auto-detect). Keyed by repo root via the shared helper.
                 let project_bases = project_base_branches(profile);
+                let current_branch =
+                    if params.base_branch.is_none() && params.issue_ref.is_some() {
+                        current_branch_if_safe(&main_repo_path)
+                    } else {
+                        None
+                    };
                 let base = resolve_repo_base_branch(
                     &main_repo_path,
                     params.base_branch.as_deref(),
                     &project_bases,
                     config.worktree.default_base_branch.as_deref(),
+                    current_branch.as_deref(),
                 );
 
                 let w = git_wt.create_worktree(branch, &worktree_path, true, base.as_deref())?;
@@ -713,7 +762,18 @@ pub fn build_instance(
             enabled: true,
             container_id: None,
             image: params.sandbox_image.clone(),
-            container_name: containers::DockerContainer::generate_name(&instance.id),
+            container_name: instance
+                .issue_ref
+                .as_ref()
+                .map(|_| {
+                    let label = instance
+                        .worktree_info
+                        .as_ref()
+                        .map(|info| info.branch.clone())
+                        .unwrap_or_else(|| branch_name_from_title(&instance.title));
+                    containers::DockerContainer::generate_name_with_label(&instance.id, &label)
+                })
+                .unwrap_or_else(|| containers::DockerContainer::generate_name(&instance.id)),
             extra_env: if params.extra_env.is_empty() {
                 None
             } else {
@@ -824,7 +884,7 @@ pub fn cleanup_instance(
             // Direct idempotent teardown, never gated on a separate existence
             // probe: a transient `inspect` failure must not skip removal and
             // orphan a live container. Volumes are swept inside `teardown`.
-            let container = containers::DockerContainer::from_session_id(&instance.id);
+            let container = containers::DockerContainer::from_name(&sandbox.container_name);
             if let containers::Teardown::Failed(e) = container.teardown(&instance.id) {
                 tracing::warn!(target: "session.create", "Failed to clean up container: {}", e);
             }
@@ -1596,27 +1656,47 @@ mod tests {
     fn resolve_base_branch_precedence() {
         // Explicit session base wins over everything.
         assert_eq!(
-            resolve_base_branch(Some("session"), Some("project"), Some("global")),
+            resolve_base_branch(Some("session"), Some("project"), Some("global"), None),
             Some("session".to_string())
         );
         // Per-project default fills in when there is no session base.
         assert_eq!(
-            resolve_base_branch(None, Some("project"), Some("global")),
+            resolve_base_branch(None, Some("project"), Some("global"), None),
             Some("project".to_string())
         );
         // Global/profile default is the last configured layer.
         assert_eq!(
-            resolve_base_branch(None, None, Some("global")),
+            resolve_base_branch(None, None, Some("global"), None),
             Some("global".to_string())
         );
         // Nothing set means auto-detect.
-        assert_eq!(resolve_base_branch(None, None, None), None);
+        assert_eq!(resolve_base_branch(None, None, None, None), None);
         // Empty/whitespace at any layer is treated as unset and skipped.
         assert_eq!(
-            resolve_base_branch(Some("   "), Some(""), Some("global")),
+            resolve_base_branch(Some("   "), Some(""), Some("global"), None),
             Some("global".to_string())
         );
-        assert_eq!(resolve_base_branch(Some("  "), None, None), None);
+        assert_eq!(resolve_base_branch(Some("  "), None, None, None), None);
+    }
+
+    #[test]
+    fn resolve_base_branch_uses_safe_current_branch_last() {
+        assert_eq!(
+            resolve_base_branch(None, None, None, Some("feature")),
+            Some("feature".to_string())
+        );
+        assert_eq!(
+            resolve_base_branch(None, None, Some("main"), Some("feature")),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            resolve_base_branch(None, Some("develop"), Some("main"), Some("feature")),
+            Some("develop".to_string())
+        );
+        assert_eq!(
+            resolve_base_branch(Some("release"), Some("develop"), Some("main"), Some("feature")),
+            Some("release".to_string())
+        );
     }
 
     #[test]
@@ -1630,20 +1710,20 @@ mod tests {
         // No explicit session base: the launch repo forks from its registered
         // per-project default.
         assert_eq!(
-            resolve_repo_base_branch(&root, None, &bases, Some("global")),
+            resolve_repo_base_branch(&root, None, &bases, Some("global"), None),
             Some("develop".to_string())
         );
 
         // Explicit session base still wins over the per-project default.
         assert_eq!(
-            resolve_repo_base_branch(&root, Some("hotfix"), &bases, Some("global")),
+            resolve_repo_base_branch(&root, Some("hotfix"), &bases, Some("global"), None),
             Some("hotfix".to_string())
         );
 
         // No registered entry for this repo: fall back to the global default.
         let empty = std::collections::HashMap::new();
         assert_eq!(
-            resolve_repo_base_branch(&root, None, &empty, Some("global")),
+            resolve_repo_base_branch(&root, None, &empty, Some("global"), None),
             Some("global".to_string())
         );
     }
@@ -1666,7 +1746,7 @@ mod tests {
         bases.insert(key, "develop".to_string());
 
         assert_eq!(
-            resolve_repo_base_branch(&wt_path, None, &bases, None),
+            resolve_repo_base_branch(&wt_path, None, &bases, None, None),
             Some("develop".to_string())
         );
     }

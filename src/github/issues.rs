@@ -627,13 +627,23 @@ pub fn issue_session_default_title(issue_ref: &IssueRef, issue: Option<&IssueRec
     }
 }
 
-pub fn issue_session_default_branch(issue_ref: &IssueRef) -> String {
-    format!(
-        "issue-{}-{}-{}",
-        issue_ref.owner(),
-        issue_ref.repo(),
-        issue_ref.number()
-    )
+pub fn issue_session_default_branch(
+    issue_ref: &IssueRef,
+    issue: Option<&IssueRecord>,
+) -> String {
+    issue
+        .map(|issue| issue.title.trim())
+        .filter(|title| !title.is_empty())
+        .map(|title| {
+            format!(
+                "{}-{}",
+                issue_ref.number(),
+                crate::session::builder::branch_name_from_title(title)
+            )
+        })
+        .unwrap_or_else(|| {
+            format!("issue-{}", issue_ref.number())
+        })
 }
 
 pub fn issue_context_prompt(issue_ref: &IssueRef, issue: Option<&IssueRecord>) -> String {
@@ -1406,8 +1416,18 @@ mod tests {
             "#17 Support issue-first session creation and attach"
         );
         assert_eq!(
-            issue_session_default_branch(&record.issue_ref),
-            "issue-mr-ples-agent-of-empires-17"
+            issue_session_default_branch(&record.issue_ref, Some(&record)),
+            "17-support-issue-first-session-creation-and-attach"
+        );
+    }
+
+    #[test]
+    fn issue_session_default_branch_falls_back_without_cached_issue() {
+        let issue_ref = IssueRef::new("Mr-Ples", "agent-of-empires", 17).unwrap();
+
+        assert_eq!(
+            issue_session_default_branch(&issue_ref, None),
+            "issue-17"
         );
     }
 

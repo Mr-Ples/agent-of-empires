@@ -624,7 +624,10 @@ impl NewSessionDialog {
             &issue_ref, issue,
         ));
         self.worktree_enabled = true;
-        self.worktree_branch = Input::new(crate::github::issue_session_default_branch(&issue_ref));
+        self.worktree_branch = Input::new(crate::github::issue_session_default_branch(
+            &issue_ref,
+            issue,
+        ));
         self.create_new_branch = true;
         self.set_issue_ref(issue_ref);
     }

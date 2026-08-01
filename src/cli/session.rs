@@ -1066,7 +1066,15 @@ async fn stop_session(profile: &str, args: SessionIdArgs) -> Result<()> {
     let tmux_session = crate::tmux::Session::new(&inst.id, &inst.title)?;
     let was_running = tmux_session.exists();
     let had_container = inst.is_sandboxed()
-        && match crate::containers::DockerContainer::from_session_id(&inst.id).probe_running() {
+        && match crate::containers::DockerContainer::from_name(
+            &inst
+                .sandbox_info
+                .as_ref()
+                .map(|sandbox| sandbox.container_name.clone())
+                .unwrap_or_else(|| crate::containers::DockerContainer::generate_name(&inst.id)),
+        )
+        .probe_running()
+        {
             crate::containers::Probe::Running | crate::containers::Probe::Unknown(_) => true,
             crate::containers::Probe::NotRunning => false,
         };

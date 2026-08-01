@@ -5124,7 +5124,12 @@ pub async fn create_session(
             if worktree_enabled {
                 issue_ref
                     .as_ref()
-                    .map(crate::github::issue_session_default_branch)
+                    .map(|issue_ref| {
+                        crate::github::issue_session_default_branch(
+                            issue_ref,
+                            cached_issue_record.as_ref(),
+                        )
+                    })
             } else {
                 None
             }

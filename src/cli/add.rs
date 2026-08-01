@@ -443,18 +443,45 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
             let global_default = config.worktree.default_base_branch.as_deref();
             let project_bases = builder::project_base_branches(profile);
             let resolve_extra = |path: &std::path::Path| {
+                let current_branch = if session_base.is_none() && issue_ref.is_some() {
+                    builder::current_branch_if_safe(path)
+                } else {
+                    None
+                };
+                let main_repo = GitWorktree::find_main_repo(path)
+                    .unwrap_or_else(|_| path.to_path_buf());
                 let project = project_bases
                     .get(&crate::session::projects::canonical_key(
-                        &path.to_string_lossy(),
+                        &main_repo.to_string_lossy(),
                     ))
                     .map(String::as_str);
-                builder::resolve_base_branch(session_base, project, global_default)
+                builder::resolve_base_branch(
+                    session_base,
+                    project,
+                    global_default,
+                    current_branch.as_deref(),
+                )
             };
 
-            // The launch repo never consults the per-project layer: explicit
-            // session base, then the global/profile default.
+            let current_branch = if session_base.is_none() && issue_ref.is_some() {
+                builder::current_branch_if_safe(&path)
+            } else {
+                None
+            };
+            let primary_main_repo =
+                GitWorktree::find_main_repo(&path).unwrap_or_else(|_| path.to_path_buf());
+            let primary_project = project_bases
+                .get(&crate::session::projects::canonical_key(
+                    &primary_main_repo.to_string_lossy(),
+                ))
+                .map(String::as_str);
             let primary = builder::WorkspaceRepoSpec {
-                base_branch: builder::resolve_base_branch(session_base, None, global_default),
+                base_branch: builder::resolve_base_branch(
+                    session_base,
+                    primary_project,
+                    global_default,
+                    current_branch.as_deref(),
+                ),
                 path: path.clone(),
             };
             let extra_repos: Vec<builder::WorkspaceRepoSpec> = all_extra_repos
@@ -567,10 +594,22 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
                 // Single-repo sessions only have the launch repo, so fall back
                 // from the explicit session base to the global/profile default.
                 let base = if args.create_branch {
+                    let current_branch = if args.base_branch.is_none() && issue_ref.is_some() {
+                        builder::current_branch_if_safe(&main_repo_path)
+                    } else {
+                        None
+                    };
+                    let project_bases = builder::project_base_branches(profile);
+                    let project = project_bases
+                        .get(&crate::session::projects::canonical_key(
+                            &main_repo_path.to_string_lossy(),
+                        ))
+                        .map(String::as_str);
                     builder::resolve_base_branch(
                         args.base_branch.as_deref(),
-                        None,
+                        project,
                         config.worktree.default_base_branch.as_deref(),
+                        current_branch.as_deref(),
                     )
                 } else {
                     None
@@ -627,6 +666,7 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
             worktree_info_opt.as_ref(),
             workspace_info_opt.as_ref(),
             args.create_branch,
+            None,
             None,
             None,
         );
@@ -900,7 +940,18 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
                 eprintln!("⚠ {}", w);
             }
 
-            let container_name = containers::DockerContainer::generate_name(&instance.id);
+            let container_name = instance
+                .issue_ref
+                .as_ref()
+                .map(|_| {
+                    let label = instance
+                        .worktree_info
+                        .as_ref()
+                        .map(|info| info.branch.clone())
+                        .unwrap_or_else(|| builder::branch_name_from_title(&instance.title));
+                    containers::DockerContainer::generate_name_with_label(&instance.id, &label)
+                })
+                .unwrap_or_else(|| containers::DockerContainer::generate_name(&instance.id));
             let image = resolve_sandbox_image(
                 args.sandbox_image.as_deref(),
                 &config.sandbox.default_image,
@@ -1073,6 +1124,10 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
                 None
             },
             instance.sandbox_info.as_ref().map(|_| instance.id.as_str()),
+            instance
+                .sandbox_info
+                .as_ref()
+                .map(|sandbox| sandbox.container_name.as_str()),
         );
         return Err(e);
     }
@@ -1122,6 +1177,10 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
                     None
                 },
                 instance.sandbox_info.as_ref().map(|_| instance.id.as_str()),
+                instance
+                    .sandbox_info
+                    .as_ref()
+                    .map(|sandbox| sandbox.container_name.as_str()),
             );
             return Ok(());
         }
@@ -1137,6 +1196,10 @@ pub async fn run(profile: &str, args: AddArgs) -> Result<()> {
                     None
                 },
                 instance.sandbox_info.as_ref().map(|_| instance.id.as_str()),
+                instance
+                    .sandbox_info
+                    .as_ref()
+                    .map(|sandbox| sandbox.container_name.as_str()),
             );
             return Err(e);
         }
@@ -1324,13 +1387,18 @@ fn cleanup_partial_session(
     created_branch: bool,
     scratch_dir: Option<&std::path::Path>,
     container_session_id: Option<&str>,
+    container_name: Option<&str>,
 ) {
     // Tear down the sandbox container first so its bind mount releases the
     // worktree before the git removal below. Best-effort and idempotent: a
     // container that was never started yields ContainerNotFound, which is not
     // an error. `Some` only when the session is sandboxed.
     if let Some(session_id) = container_session_id {
-        let container = crate::containers::DockerContainer::from_session_id(session_id);
+        let container = container_name
+            .map(crate::containers::DockerContainer::from_name)
+            .unwrap_or_else(|| {
+                crate::containers::DockerContainer::from_session_id(session_id)
+            });
         if let crate::containers::Teardown::Failed(e) = container.teardown(session_id) {
             tracing::warn!(
                 target: "cli.add",

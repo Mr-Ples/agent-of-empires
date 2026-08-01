@@ -425,7 +425,12 @@ pub fn is_permission_error(error: &str) -> bool {
 ///
 /// Returns true if the container successfully deleted the contents.
 pub fn cleanup_sandbox_worktree(instance: &Instance) -> bool {
-    let container = DockerContainer::from_session_id(&instance.id);
+    let container_name = instance
+        .sandbox_info
+        .as_ref()
+        .map(|sandbox| sandbox.container_name.clone())
+        .unwrap_or_else(|| DockerContainer::generate_name(&instance.id));
+    let container = DockerContainer::from_name(&container_name);
     match container.exists() {
         Ok(true) => {}
         Ok(false) => return false,
@@ -671,7 +676,12 @@ fn try_sandbox_dir_cleanup(
         return false;
     }
 
-    let container = DockerContainer::from_session_id(&instance.id);
+    let container_name = instance
+        .sandbox_info
+        .as_ref()
+        .map(|sandbox| sandbox.container_name.clone())
+        .unwrap_or_else(|| DockerContainer::generate_name(&instance.id));
+    let container = DockerContainer::from_name(&container_name);
     let rm_result = container.remove(true);
     tracing::debug!(target: "git.worktree", ?rm_result, "container force-removed");
     container.remove_named_ignore_volumes(&instance.id);

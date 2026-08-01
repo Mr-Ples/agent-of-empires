@@ -1076,7 +1076,15 @@ impl HomeView {
                     );
                 }
                 if inst.sandbox_info.as_ref().is_some_and(|s| s.enabled) {
-                    let container = crate::containers::DockerContainer::from_session_id(&inst.id);
+                    let container_name = inst
+                        .sandbox_info
+                        .as_ref()
+                        .map(|sandbox| sandbox.container_name.clone())
+                        .unwrap_or_else(|| {
+                            crate::containers::DockerContainer::generate_name(&inst.id)
+                        });
+                    let container =
+                        crate::containers::DockerContainer::from_name(&container_name);
                     if let crate::containers::Teardown::Failed(e) = container.teardown(&inst.id) {
                         tracing::warn!(
                             target: "session.delete",

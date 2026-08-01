@@ -127,9 +127,46 @@ impl DockerContainer {
         format!("aoe-sandbox-{}", truncate_id(session_id, 8))
     }
 
+    /// Generate a human-readable sandbox name while retaining the session id
+    /// suffix needed to keep names unique and recoverable.
+    pub fn generate_name_with_label(session_id: &str, label: &str) -> String {
+        let mut safe_label = String::new();
+        let mut last_was_separator = false;
+        for ch in label.chars() {
+            let ch = if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            };
+            if ch == '-' {
+                if last_was_separator {
+                    continue;
+                }
+                last_was_separator = true;
+            } else {
+                last_was_separator = false;
+            }
+            safe_label.push(ch);
+        }
+        let safe_label = safe_label.trim_matches('-');
+        let safe_label: String = safe_label.chars().take(48).collect();
+        if safe_label.is_empty() {
+            return Self::generate_name(session_id);
+        }
+        format!(
+            "aoe-sandbox-{}-{}",
+            safe_label,
+            truncate_id(session_id, 8)
+        )
+    }
+
     pub fn from_session_id(session_id: &str) -> Self {
+        Self::from_name(&Self::generate_name(session_id))
+    }
+
+    pub fn from_name(name: &str) -> Self {
         Self {
-            name: Self::generate_name(session_id),
+            name: name.to_string(),
             image: String::new(),
             runtime: get_container_runtime(),
         }
@@ -335,6 +372,15 @@ mod tests {
     fn test_container_generate_name_long_id() {
         let name = DockerContainer::generate_name("abcdefghijklmnop");
         assert_eq!(name, "aoe-sandbox-abcdefgh");
+    }
+
+    #[test]
+    fn test_container_generate_name_with_issue_label() {
+        let name = DockerContainer::generate_name_with_label(
+            "abcdefghijklmnop",
+            "17-Support issue-first sessions",
+        );
+        assert_eq!(name, "aoe-sandbox-17-support-issue-first-sessions-abcdefgh");
     }
 
     #[test]
