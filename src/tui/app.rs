@@ -84,7 +84,7 @@ fn create_github_issue_blocking(
     repository: crate::github::IssueRepository,
     request: crate::github::IssueCreateRequest,
 ) -> Result<String> {
-    let token = github_issue_token().context("GitHub authentication is required")?;
+    let token = github_issue_token_impl().context("GitHub authentication is required")?;
     let app_dir = crate::session::get_app_dir().context("failed to locate app data directory")?;
     let handle = std::thread::spawn(move || -> Result<String> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -119,7 +119,7 @@ fn create_github_issue_blocking(
         .map_err(|_| anyhow::anyhow!("GitHub issue creation worker panicked"))?
 }
 
-fn github_issue_token() -> Option<String> {
+pub(crate) fn github_issue_token_impl() -> Option<String> {
     ["GITHUB_TOKEN", "GH_TOKEN"]
         .into_iter()
         .filter_map(|name| std::env::var(name).ok())
@@ -1822,6 +1822,11 @@ impl App {
             }
 
             if self.home.apply_status_updates() {
+                refresh_needed = true;
+                needs_full_refresh = true;
+            }
+
+            if self.home.apply_issue_sync_results() {
                 refresh_needed = true;
                 needs_full_refresh = true;
             }

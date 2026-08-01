@@ -100,6 +100,176 @@ fn worktree_rename_block(
 }
 
 impl HomeView {
+    /// Prepare the issue view from the repo the user is currently working in.
+    /// Issue mode is intentionally the point where a normal project is
+    /// registered, so opening it never requires a separate setup detour.
+    pub(super) fn prepare_issue_mode(&mut self) {
+        use crate::session::{projects, Project, ProjectScope};
+
+        let path = self
+            .selected_session
+            .as_deref()
+            .and_then(|id| self.get_instance(id))
+            .map(|instance| instance.project_path.clone())
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned())
+            });
+        let Some(path) = path else {
+            return;
+        };
+        let canonical = projects::canonical_key(&path);
+        let Some(slug) = crate::git::get_remote_slug(std::path::Path::new(&canonical)) else {
+            self.refresh_registered_projects();
+            return;
+        };
+        if !self
+            .registered_projects
+            .iter()
+            .any(|project| projects::canonical_key(&project.path) == canonical)
+        {
+            let name = projects::repo_label(&canonical);
+            if let Err(error) = projects::add(
+                &self.config_profile(),
+                ProjectScope::Global,
+                Project::new(name, canonical.clone(), ProjectScope::Global),
+                false,
+            ) {
+                tracing::warn!(
+                    target: "tui.issues",
+                    %error,
+                    "failed to register current GitHub repository"
+                );
+            }
+        }
+        self.refresh_registered_projects();
+
+        let Some(project) = self
+            .registered_projects
+            .iter()
+            .find(|project| projects::canonical_key(&project.path) == canonical)
+            .cloned()
+        else {
+            return;
+        };
+        let Some((owner, repo)) = slug.split_once('/') else {
+            return;
+        };
+        let Ok(repository) = crate::github::IssueRepository::new(owner, repo) else {
+            return;
+        };
+        let state = self.project_issue_states.get(&project.path);
+        let should_sync = matches!(
+            state,
+            None | Some(super::ProjectIssueReadState::MissingCache { .. })
+                | Some(super::ProjectIssueReadState::Ready {
+                    sync: crate::github::IssueSyncMetadata {
+                        status: crate::github::IssueSyncStatus::Stale,
+                        ..
+                    },
+                    ..
+                })
+        );
+        if should_sync {
+            self.start_issue_sync(project.path, repository);
+        }
+    }
+
+    fn start_issue_sync(
+        &mut self,
+        project_path: String,
+        repository: crate::github::IssueRepository,
+    ) {
+        if self.issue_sync_rx.is_some() {
+            return;
+        }
+        let Ok(app_dir) = crate::session::get_app_dir() else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.issue_sync_rx = Some(rx);
+        self.project_issue_states.insert(
+            project_path.clone(),
+            super::ProjectIssueReadState::Syncing {
+                repository: repository.clone(),
+            },
+        );
+        self.rebuild_flat_items();
+        std::thread::spawn(move || {
+            let result = (|| -> anyhow::Result<()> {
+                let Some(token) = crate::tui::github_issue_token() else {
+                    let store = crate::github::IssueSyncStore::new(
+                        crate::github::issue_sync_cache_dir(&app_dir),
+                    );
+                    let metadata = crate::github::IssueSyncMetadata::failure(
+                        crate::github::IssueSyncStatus::AuthRequired,
+                        "GitHub authentication is required",
+                    );
+                    let mut cache = store.load(&repository).ok().flatten().unwrap_or(
+                        crate::github::IssueSyncCache {
+                            repository: repository.clone(),
+                            issues: Vec::new(),
+                            sync: metadata.clone(),
+                        },
+                    );
+                    for issue in &mut cache.issues {
+                        issue.sync = metadata.clone();
+                    }
+                    cache.sync = metadata;
+                    store.save(&cache)?;
+                    return Ok(());
+                };
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                runtime.block_on(async move {
+                    let client = crate::github::GitHubClient::authenticated(
+                        crate::github::GitHubClientConfig {
+                            api_base: crate::github::DEFAULT_GITHUB_API_BASE.to_string(),
+                            user_agent: crate::github::DEFAULT_USER_AGENT.to_string(),
+                            timeout: std::time::Duration::from_secs(20),
+                        },
+                        &token,
+                    )?;
+                    let store = crate::github::IssueSyncStore::new(
+                        crate::github::issue_sync_cache_dir(app_dir),
+                    );
+                    let service = crate::github::IssueSyncer::new(client, store);
+                    service
+                        .sync(&repository, crate::github::IssueSyncAuthMode::Interactive)
+                        .await?;
+                    Ok(())
+                })
+            })();
+            let _ = tx.send(super::IssueSyncResult {
+                project_path,
+                result,
+            });
+        });
+    }
+
+    pub(in crate::tui) fn apply_issue_sync_results(&mut self) -> bool {
+        let Some(rx) = self.issue_sync_rx.as_ref() else {
+            return false;
+        };
+        let Ok(result) = rx.try_recv() else {
+            return false;
+        };
+        self.issue_sync_rx = None;
+        if let Err(error) = result.result {
+            self.project_issue_states.insert(
+                result.project_path,
+                super::ProjectIssueReadState::LoadFailed(format!("issue sync failed: {error}")),
+            );
+            self.rebuild_flat_items();
+            return true;
+        }
+        self.refresh_project_work_items();
+        self.rebuild_flat_items();
+        true
+    }
+
     /// Pin or unpin the project header under the cursor (project view only).
     ///
     /// Pinning keeps the repo's header in project view even after its last

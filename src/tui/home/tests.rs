@@ -9701,6 +9701,7 @@ fn issues_mode_scopes_work_items_to_active_project_and_collapses_closed() {
         Some(Item::Group { name, collapsed, session_count, .. })
             if name == "Closed issues" && *collapsed && *session_count == 1
     ));
+    assert_eq!(env.view.shelf_start(), Some(2));
 
     env.view.issues_closed_collapsed = false;
     env.view.flat_items = env.view.build_flat_items();

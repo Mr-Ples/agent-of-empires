@@ -28,6 +28,10 @@ mod worker;
 
 pub use app::*;
 
+pub(crate) fn github_issue_token() -> Option<String> {
+    app::github_issue_token_impl()
+}
+
 /// Entry point for the hidden `aoe __vt-pipe <socket>` helper subprocess used
 /// by the VT live-preview path (`[tmux] vt_live`, default on). Copies the
 /// pane's piped output (stdin) to the unix socket, unbuffered. Dispatched in

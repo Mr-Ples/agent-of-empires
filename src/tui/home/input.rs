@@ -3742,7 +3742,7 @@ impl HomeView {
                 Item::WorkItem { item, .. } => {
                     entries.push(PaletteCommand {
                         id: "jump-work-item",
-                        title: format!("Jump to issue: {} {}", item.issue_ref, item.title),
+                        title: format!("Jump to issue: {} {}", item.issue_ref.number(), item.title),
                         group: PaletteGroup::Sessions,
                         keywords: vec!["issue", "work-item", "jump", "select"],
                         hotkey: String::new(),
@@ -4281,6 +4281,9 @@ impl HomeView {
 
     fn apply_group_by(&mut self, new_mode: GroupByMode) {
         self.group_by = new_mode;
+        if new_mode == GroupByMode::Issues {
+            self.prepare_issue_mode();
+        }
         self.rebuild_flat_items();
         self.reseat_cursor_after_rebuild();
         let group_by = self.group_by;
@@ -5035,6 +5038,13 @@ impl HomeView {
             return;
         };
         let repository = match self.project_issue_states.get(&project.path) {
+            Some(super::ProjectIssueReadState::Syncing { .. }) => {
+                self.info_dialog = Some(InfoDialog::sized_to_fit(
+                    "Issues syncing",
+                    "Wait for the GitHub issue sync to finish before creating an issue.",
+                ));
+                return;
+            }
             Some(super::ProjectIssueReadState::Ready { repository, .. })
             | Some(super::ProjectIssueReadState::MissingCache { repository }) => repository.clone(),
             Some(super::ProjectIssueReadState::MissingRemote) => {

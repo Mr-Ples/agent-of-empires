@@ -1443,7 +1443,7 @@ impl HomeView {
                 (icon, text, style)
             }
             Item::WorkItem { item, .. } => {
-                let mut parts = vec![format!("{} {}", item.issue_ref, item.title)];
+                let mut parts = vec![format!("#{} {}", item.issue_ref.number(), item.title)];
                 if !item.labels.is_empty() {
                     let labels = item
                         .labels
@@ -1469,7 +1469,7 @@ impl HomeView {
                     crate::github::AttentionState::Active => ("*", theme.running),
                     crate::github::AttentionState::Stopped => ("-", theme.dimmed),
                 });
-                let icon = attention.map_or("#", |(icon, _)| icon);
+                let icon = attention.map_or("", |(icon, _)| icon);
                 let style = attention
                     .map(|(_, color)| Style::default().fg(color))
                     .unwrap_or_else(|| Style::default().fg(theme.accent));
@@ -2833,7 +2833,7 @@ impl HomeView {
                                 Style::default().fg(theme.title).bold(),
                             )),
                             Line::from(Span::styled(
-                                item.issue_ref.to_string(),
+                                format!("{}", item.issue_ref.number()),
                                 Style::default().fg(theme.dimmed),
                             )),
                             Line::from(Span::raw("")),

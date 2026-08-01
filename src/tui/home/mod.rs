@@ -258,6 +258,9 @@ pub(super) struct ProjectWorkItem {
 
 #[derive(Debug, Clone)]
 pub(super) enum ProjectIssueReadState {
+    Syncing {
+        repository: crate::github::IssueRepository,
+    },
     Ready {
         repository: crate::github::IssueRepository,
         sync: crate::github::IssueSyncMetadata,
@@ -267,6 +270,11 @@ pub(super) enum ProjectIssueReadState {
         repository: crate::github::IssueRepository,
     },
     LoadFailed(String),
+}
+
+pub(super) struct IssueSyncResult {
+    pub(super) project_path: String,
+    pub(super) result: anyhow::Result<()>,
 }
 
 /// View mode for the home screen
@@ -508,6 +516,7 @@ pub struct HomeView {
     /// through the normal GitHub sync paths and the home view projects reload.
     pub(super) project_work_items: Vec<ProjectWorkItem>,
     pub(super) project_issue_states: HashMap<String, ProjectIssueReadState>,
+    pub(super) issue_sync_rx: Option<std::sync::mpsc::Receiver<IssueSyncResult>>,
     pub(super) issues_closed_collapsed: bool,
 
     // Dialogs
@@ -2156,6 +2165,7 @@ impl HomeView {
             registered_projects: Vec::new(),
             project_work_items: Vec::new(),
             project_issue_states: HashMap::new(),
+            issue_sync_rx: None,
             issues_closed_collapsed: true,
             show_help: false,
             help_scroll: 0,
@@ -2426,6 +2436,9 @@ impl HomeView {
         view.maybe_start_startup_recovery();
 
         view.refresh_registered_projects();
+        if view.group_by == GroupByMode::Issues {
+            view.prepare_issue_mode();
+        }
         view.flat_items = view.build_flat_items();
         view.update_selected();
         // Disk subscriptions stay scoped to the loaded storages: in
@@ -4814,6 +4827,7 @@ impl HomeView {
             Item::Group { path, .. } => {
                 crate::session::is_within_archived_section(path)
                     || crate::session::is_within_trash_section(path)
+                    || path.starts_with("__issues_closed:")
             }
             Item::Session { .. } => false,
             Item::WorkItem { .. } => false,
@@ -4991,6 +5005,10 @@ impl HomeView {
             ));
         };
         match state {
+            ProjectIssueReadState::Syncing { repository } => Some(format!(
+                "Syncing GitHub issues for {}/{}...",
+                repository.owner, repository.repo
+            )),
             ProjectIssueReadState::Ready { repository, sync } => match sync.status {
                 crate::github::IssueSyncStatus::Fresh => None,
                 crate::github::IssueSyncStatus::Stale => Some(format!(
