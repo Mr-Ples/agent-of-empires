@@ -210,6 +210,27 @@ impl HomeView {
         }
     }
 
+    /// Force a fresh GitHub issue sync for the active Issues project.
+    /// Unlike `prepare_issue_mode`, this intentionally ignores the cache's
+    /// freshness so the user can reconcile externally changed issue state.
+    pub(in crate::tui) fn sync_issue_work_items(&mut self) {
+        let Some(project) = self.active_issue_project().cloned() else {
+            return;
+        };
+        let Some(repository) = self.project_issue_states.get(&project.path).and_then(|state| {
+            match state {
+                super::ProjectIssueReadState::Ready { repository, .. }
+                | super::ProjectIssueReadState::MissingCache { repository }
+                | super::ProjectIssueReadState::Syncing { repository } => Some(repository.clone()),
+                super::ProjectIssueReadState::MissingRemote
+                | super::ProjectIssueReadState::LoadFailed(_) => None,
+            }
+        }) else {
+            return;
+        };
+        self.start_issue_sync(project.path, repository);
+    }
+
     fn start_issue_sync(
         &mut self,
         project_path: String,

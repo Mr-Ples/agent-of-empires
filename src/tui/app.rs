@@ -83,6 +83,7 @@ fn clear_reported_session_creates(reported: u32, outcome: crate::telemetry::Send
 fn create_github_issue_blocking(
     repository: crate::github::IssueRepository,
     request: crate::github::IssueCreateRequest,
+    new_labels: Vec<String>,
 ) -> Result<String> {
     let token = github_issue_token_impl().context("GitHub authentication is required")?;
     let app_dir = crate::session::get_app_dir().context("failed to locate app data directory")?;
@@ -101,6 +102,12 @@ fn create_github_issue_blocking(
                 &token,
             )
             .context("failed to build GitHub client")?;
+            for label in new_labels {
+                client
+                    .create_label(&repository.owner, &repository.repo, &label)
+                    .await
+                    .with_context(|| format!("failed to create GitHub label '{label}'"))?;
+            }
             let store =
                 crate::github::IssueSyncStore::new(crate::github::issue_sync_cache_dir(app_dir));
             let service = crate::github::IssueSyncer::new(client, store);
@@ -117,6 +124,60 @@ fn create_github_issue_blocking(
     handle
         .join()
         .map_err(|_| anyhow::anyhow!("GitHub issue creation worker panicked"))?
+}
+
+fn mutate_github_issue_blocking(
+    issue_ref: crate::github::IssueRef,
+    mutation: GitHubIssueMutation,
+) -> Result<()> {
+    let token = github_issue_token_impl().context("GitHub authentication is required")?;
+    let app_dir = crate::session::get_app_dir().context("failed to locate app data directory")?;
+    std::thread::spawn(move || -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        runtime.block_on(async move {
+            let client = crate::github::GitHubClient::authenticated(
+                crate::github::GitHubClientConfig {
+                    api_base: crate::github::DEFAULT_GITHUB_API_BASE.to_string(),
+                    user_agent: crate::github::DEFAULT_USER_AGENT.to_string(),
+                    timeout: Duration::from_secs(20),
+                },
+                &token,
+            )?;
+            match mutation {
+                GitHubIssueMutation::Edit { request, new_labels } => {
+                    let repository = crate::github::IssueRepository {
+                        owner: issue_ref.owner().to_string(),
+                        repo: issue_ref.repo().to_string(),
+                    };
+                    for label in new_labels {
+                        client
+                            .create_label(&repository.owner, &repository.repo, &label)
+                            .await
+                            .with_context(|| format!("failed to create GitHub label '{label}'"))?;
+                    }
+                    let store = crate::github::IssueSyncStore::new(crate::github::issue_sync_cache_dir(app_dir));
+                    let service = crate::github::IssueSyncer::new(client, store);
+                    service.edit_issue(&issue_ref, &request, crate::github::IssueSyncAuthMode::Interactive).await?;
+                }
+                GitHubIssueMutation::SetState(state) => {
+                    let store = crate::github::IssueSyncStore::new(crate::github::issue_sync_cache_dir(app_dir));
+                    let service = crate::github::IssueSyncer::new(client, store);
+                    service.set_issue_state_at(&issue_ref, state, crate::github::IssueSyncAuthMode::Interactive, chrono::Utc::now()).await?;
+                }
+            }
+            Ok(())
+        })
+    })
+    .join()
+    .map_err(|_| anyhow::anyhow!("GitHub issue worker panicked"))?
+}
+
+enum GitHubIssueMutation {
+    Edit {
+        request: crate::github::IssueEditRequest,
+        new_labels: Vec<String>,
+    },
+    SetState(crate::github::IssueState),
 }
 
 pub(crate) fn github_issue_token_impl() -> Option<String> {
@@ -2827,6 +2888,18 @@ impl App {
         key: KeyEvent,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     ) -> Result<()> {
+        // The selected attached Work Item owns this preview toggle even when
+        // its structured transcript is mounted and currently has focus.
+        if matches!(key.code, KeyCode::Char('i'))
+            && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT)
+            && self.home.selected_attached_work_item()
+        {
+            self.home.toggle_preview_info();
+            return Ok(());
+        }
+
         // An ACTIVE embedded structured view owns the keyboard, just as
         // the full-screen view owned the whole event stream: letters must
         // reach the composer, not home-view shortcuts (q, n, d…). A merely
@@ -3453,13 +3526,14 @@ impl App {
             Action::CreateGitHubIssue {
                 repository,
                 request,
+                new_labels,
             } => {
                 self.update_status = Some(UpdateStatus::transient(
                     "creating GitHub issue...".to_string(),
                 ));
-                match create_github_issue_blocking(repository, request) {
+                match create_github_issue_blocking(repository, request, new_labels) {
                     Ok(url) => {
-                        self.home.refresh_issue_work_items();
+                        self.home.sync_issue_work_items();
                         self.update_status = Some(UpdateStatus::transient(format!(
                             "created GitHub issue: {url}"
                         )));
@@ -3469,6 +3543,27 @@ impl App {
                             "issue create failed: {error}"
                         )));
                     }
+                }
+            }
+            Action::EditGitHubIssue { issue_ref, request, new_labels } => {
+                self.update_status = Some(UpdateStatus::transient("updating GitHub issue...".to_string()));
+                match mutate_github_issue_blocking(issue_ref, GitHubIssueMutation::Edit { request, new_labels }) {
+                    Ok(()) => {
+                        self.home.sync_issue_work_items();
+                        self.update_status = Some(UpdateStatus::transient("GitHub issue updated".to_string()));
+                    }
+                    Err(error) => self.update_status = Some(UpdateStatus::transient(format!("issue update failed: {error}"))),
+                }
+            }
+            Action::SetGitHubIssueState { issue_ref, state } => {
+                let verb = if state == crate::github::IssueState::Closed { "closing" } else { "reopening" };
+                self.update_status = Some(UpdateStatus::transient(format!("{verb} GitHub issue...")));
+                match mutate_github_issue_blocking(issue_ref, GitHubIssueMutation::SetState(state)) {
+                    Ok(()) => {
+                        self.home.sync_issue_work_items();
+                        self.update_status = Some(UpdateStatus::transient(format!("GitHub issue {}", if state == crate::github::IssueState::Closed { "closed" } else { "reopened" })));
+                    }
+                    Err(error) => self.update_status = Some(UpdateStatus::transient(format!("issue update failed: {error}"))),
                 }
             }
             Action::SpawnImagePull(image) => {
@@ -4177,6 +4272,16 @@ pub enum Action {
     CreateGitHubIssue {
         repository: crate::github::IssueRepository,
         request: crate::github::IssueCreateRequest,
+        new_labels: Vec<String>,
+    },
+    EditGitHubIssue {
+        issue_ref: crate::github::IssueRef,
+        request: crate::github::IssueEditRequest,
+        new_labels: Vec<String>,
+    },
+    SetGitHubIssueState {
+        issue_ref: crate::github::IssueRef,
+        state: crate::github::IssueState,
     },
     /// Pull the sandbox image after the user accepts the "image update
     /// available" banner's confirm. Deferred to `execute_action` so the loop

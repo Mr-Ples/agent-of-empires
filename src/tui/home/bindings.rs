@@ -37,6 +37,8 @@ pub enum ActionId {
     SearchNext,
     NewSession,
     NewIssue,
+    RefreshIssues,
+    IssueActions,
     NewFromSelection,
     NewFromProject,
     AttachTerminal,
@@ -502,6 +504,38 @@ pub static BINDINGS: &[Binding] = &[
         }),
     },
     Binding {
+        id: ActionId::RefreshIssues,
+        non_strict: &[k('R')],
+        strict: &[ctrl('r')],
+        context: Context::IssuesMode,
+        help: Some(HelpMeta {
+            section: HelpSection::Actions,
+            desc: "Refresh GitHub issues",
+        }),
+        palette: Some(PaletteMeta {
+            title: "Refresh GitHub issues",
+            keywords: &["issue", "github", "sync", "reload"],
+            group: PaletteGroup::Actions,
+            serve_only: false,
+        }),
+    },
+    Binding {
+        id: ActionId::IssueActions,
+        non_strict: &[k('e')],
+        strict: &[k('E')],
+        context: Context::IssuesMode,
+        help: Some(HelpMeta {
+            section: HelpSection::Actions,
+            desc: "Issue actions",
+        }),
+        palette: Some(PaletteMeta {
+            title: "Issue actions",
+            keywords: &["issue", "github", "edit", "close", "reopen", "labels"],
+            group: PaletteGroup::Actions,
+            serve_only: false,
+        }),
+    },
+    Binding {
         id: ActionId::NewSession,
         non_strict: &[k('n')],
         strict: &[k('N')],
@@ -844,7 +878,7 @@ pub static BINDINGS: &[Binding] = &[
     Binding {
         id: ActionId::TogglePreviewInfo,
         non_strict: &[k('i')],
-        strict: &[k('I')],
+        strict: &[k('i')],
         context: Context::Always,
         help: Some(HelpMeta {
             section: HelpSection::Views,
@@ -981,6 +1015,8 @@ pub fn palette_id(id: ActionId) -> &'static str {
     match id {
         ActionId::NewSession => "new-session",
         ActionId::NewIssue => "new-issue",
+        ActionId::RefreshIssues => "refresh-issues",
+        ActionId::IssueActions => "issue-actions",
         ActionId::NewFromSelection => "new-from-selection",
         ActionId::NewFromProject => "new-from-project",
         ActionId::AttachTerminal => "attach-terminal",

@@ -699,10 +699,14 @@ export function PluginPaneBody({ entry }: { entry: PluginUiEntry }) {
   // this surfaces a slow auto-refresh without strobing on every 3s cadence.
   const refreshing = usePluginUiRefreshing();
   return (
-    <div className="flex-1 min-h-0 overflow-auto p-3" data-testid="plugin-pane-body" data-plugin-id={entry.plugin_id}>
+    <div
+      className="relative flex-1 min-h-0 overflow-auto p-3"
+      data-testid="plugin-pane-body"
+      data-plugin-id={entry.plugin_id}
+    >
       {refreshing && (
         <div
-          className="sticky top-0 z-10 mb-1.5 flex items-center justify-end gap-1 text-[10px] text-text-dim"
+          className="pointer-events-none absolute right-3 bottom-2 z-10 flex items-center gap-1 rounded bg-surface-800/90 px-1.5 py-1 text-[10px] text-text-dim"
           data-testid="plugin-pane-refreshing"
         >
           <Spinner className="size-3" />

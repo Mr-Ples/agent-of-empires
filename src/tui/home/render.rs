@@ -907,6 +907,7 @@ impl HomeView {
         render_dialogs!(
             new_dialog,
             new_issue_dialog,
+            issue_actions_dialog,
             confirm_dialog,
             unified_delete_dialog,
             group_delete_options_dialog,
@@ -1359,6 +1360,7 @@ impl HomeView {
         self.show_help
             || self.new_dialog.is_some()
             || self.new_issue_dialog.is_some()
+            || self.issue_actions_dialog.is_some()
             || self.confirm_dialog.is_some()
             || self.unified_delete_dialog.is_some()
             || self.group_delete_options_dialog.is_some()
@@ -2500,8 +2502,81 @@ impl HomeView {
         self.active_preview_cache().captured_lines
     }
 
+    fn render_issue_detail_preview(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        theme: &Theme,
+        item: &crate::github::WorkItemProjection,
+    ) {
+        let mut lines = vec![
+            Line::from(Span::styled(
+                item.title.clone(),
+                Style::default().fg(theme.title).bold(),
+            )),
+            Line::from(Span::styled(
+                format!("{}", item.issue_ref.number()),
+                Style::default().fg(theme.dimmed),
+            )),
+            Line::from(Span::raw("")),
+        ];
+        if !item.labels.is_empty() {
+            let mut label_line = vec![Span::raw("Labels: ")];
+            for (index, label) in item.labels.iter().enumerate() {
+                if index > 0 {
+                    label_line.push(Span::raw(", "));
+                }
+                let style = issue_label_style(label.color.as_deref())
+                    .unwrap_or_else(|| Style::default().fg(theme.dimmed));
+                label_line.push(Span::styled(label.name.clone(), style));
+                if let Some(description) = label.description.as_deref() {
+                    label_line.push(Span::styled(
+                        format!(" ({description})"),
+                        Style::default().fg(theme.dimmed),
+                    ));
+                }
+            }
+            lines.push(Line::from(label_line));
+        }
+        if item.pull_request.is_some() {
+            lines.push(Line::from("Pull request: yes"));
+        }
+        lines.push(Line::from(format!("URL: {}", item.url)));
+        if item.sync.status != crate::github::IssueSyncStatus::Fresh {
+            lines.push(Line::from(format!("Sync: {:?}", item.sync.status)));
+            if let Some(message) = &item.sync.message {
+                lines.push(Line::from(message.clone()));
+            }
+        }
+        // Work Item detail previews prefer the full cached body. The excerpt is
+        // only a fallback for older or partial cache entries.
+        if let Some(body) = item.issue.body.as_ref().or(item.issue.excerpt.as_ref()) {
+            lines.push(Line::from(Span::raw("")));
+            lines.extend(body.lines().map(|line| Line::from(line.to_string())));
+        }
+
+        let total_lines = lines.len();
+        self.preview_pane_area = area;
+        self.preview_visible_rows = area.height as usize;
+        self.set_preview_text_view(area, total_lines);
+        let scroll_top =
+            preview::compute_scroll(total_lines, area.height as usize, self.preview_scroll_offset);
+        let preview = Paragraph::new(Text::from(lines))
+            .style(Style::default().fg(theme.text))
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_top, 0));
+        frame.render_widget(preview, area);
+    }
+
     fn render_preview(&mut self, frame: &mut Frame, area: Rect, theme: &Theme, layout: PaneLayout) {
-        let compact = area.width < responsive::STACKED_BREAKPOINT;
+        let issue_without_session_selected = matches!(
+            self.flat_items.get(self.cursor),
+            Some(Item::WorkItem { item, .. })
+                if item.attached_session_id.is_none()
+        );
+        let compact = area.width < responsive::STACKED_BREAKPOINT
+            && !issue_without_session_selected
+            && !self.issue_preview_expanded;
         let (border_color, title_color) = match self.view_mode {
             ViewMode::Structured => (theme.border, theme.title),
             ViewMode::Terminal | ViewMode::Tool(_) => {
@@ -2604,11 +2679,13 @@ impl HomeView {
             // Terminal/Tool use the minimal header in `render_terminal_preview`),
             // so the hint applies everywhere except the compact branch
             // above, where the outer title is already taken.
-            let key = if self.strict_hotkeys { "I" } else { "i" };
-            let hint_text = if self.show_preview_info {
+            let key = "i";
+            let hint_text = if !self.show_preview_info {
+                format!(" show info with {key} ")
+            } else if self.issue_preview_expanded {
                 format!(" hide info with {key} ")
             } else {
-                format!(" show info with {key} ")
+                format!(" expand info with {key} ")
             };
             let hint_style = Style::default().fg(theme.dimmed).italic();
 
@@ -2728,18 +2805,42 @@ impl HomeView {
                 .and_then(|id| self.get_instance(id))
                 .is_some_and(|inst| inst.is_structured() && inst.status != Status::Creating);
 
+        let expanded_attached_issue = if self.issue_preview_expanded {
+            if let Some(Item::WorkItem { item, .. }) = self.flat_items.get(self.cursor) {
+                if item.attached_session_id.is_some() {
+                    Some(item.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Keep the off-thread capture worker pointed at whatever pane this
         // view shows (and tuned to live-send vs. idle cadence) before any
         // refresh reads from it. Done once here, not per-branch, so the
         // creating / no-selection / archived / stopped paths also retarget or
         // tear it down (no live pane feeds `None` so the worker stops capturing).
-        let desired =
-            if selected_archived || selected_trashed || selected_stopped || selected_structured {
-                None
-            } else {
-                self.displayed_pane_tmux_name()
-            };
+        let desired = if expanded_attached_issue.is_some()
+            || selected_archived
+            || selected_trashed
+            || selected_stopped
+            || selected_structured
+        {
+            None
+        } else {
+            self.displayed_pane_tmux_name()
+        };
         self.sync_preview_capture_worker(desired);
+
+        if let Some(item) = expanded_attached_issue {
+            self.render_issue_detail_preview(frame, inner, theme, &item);
+            self.paint_preview_selection(frame, theme);
+            return;
+        }
 
         if selected_archived {
             self.render_archived_preview(frame, inner, theme);
@@ -2900,54 +3001,8 @@ impl HomeView {
                     } else if let Some(Item::WorkItem { item, .. }) =
                         self.flat_items.get(self.cursor)
                     {
-                        let mut lines = vec![
-                            Line::from(Span::styled(
-                                item.title.clone(),
-                                Style::default().fg(theme.title).bold(),
-                            )),
-                            Line::from(Span::styled(
-                                format!("{}", item.issue_ref.number()),
-                                Style::default().fg(theme.dimmed),
-                            )),
-                            Line::from(Span::raw("")),
-                        ];
-                        if !item.labels.is_empty() {
-                            let mut label_line = vec![Span::raw("Labels: ")];
-                            for (index, label) in item.labels.iter().enumerate() {
-                                if index > 0 {
-                                    label_line.push(Span::raw(", "));
-                                }
-                                let style = issue_label_style(label.color.as_deref())
-                                    .unwrap_or_else(|| Style::default().fg(theme.dimmed));
-                                label_line.push(Span::styled(label.name.clone(), style));
-                                if let Some(description) = label.description.as_deref() {
-                                    label_line.push(Span::styled(
-                                        format!(" ({description})"),
-                                        Style::default().fg(theme.dimmed),
-                                    ));
-                                }
-                            }
-                            lines.push(Line::from(label_line));
-                        }
-                        if item.pull_request.is_some() {
-                            lines.push(Line::from("Pull request: yes"));
-                        }
-                        lines.push(Line::from(format!("URL: {}", item.url)));
-                        if item.sync.status != crate::github::IssueSyncStatus::Fresh {
-                            lines.push(Line::from(format!("Sync: {:?}", item.sync.status)));
-                            if let Some(message) = &item.sync.message {
-                                lines.push(Line::from(message.clone()));
-                            }
-                        }
-                        if let Some(body) = item.issue.excerpt.as_ref().or(item.issue.body.as_ref())
-                        {
-                            lines.push(Line::from(Span::raw("")));
-                            lines.extend(body.lines().map(|line| Line::from(line.to_string())));
-                        }
-                        let preview = Paragraph::new(Text::from(lines))
-                            .style(Style::default().fg(theme.text))
-                            .wrap(Wrap { trim: false });
-                        frame.render_widget(preview, inner);
+                        let item = item.clone();
+                        self.render_issue_detail_preview(frame, inner, theme, &item);
                     } else {
                         let hint = Paragraph::new("Select a session to preview")
                             .style(Style::default().fg(theme.dimmed))
@@ -3907,16 +3962,45 @@ impl HomeView {
             }
         }
 
-        // New session. In non-strict mode bare `n` is the usual chord, but while
-        // a committed search borrows `n` for cycling, advertise Shift+N (which
-        // still creates, #3038) so the footer never claims `n` makes a session
-        // when it actually cycles. Strict already uses `N`, so it needs no swap.
+        // Issue mode has separate controls for creating a GitHub issue,
+        // refreshing the repository, and creating a session from the selected
+        // Work Item. Other views keep the generic New-session hint.
         let new_uses_shift = committed_search && !strict;
-        groups.push((
-            2,
-            kc(if strict || new_uses_shift { 'N' } else { 'n' }),
-            mk(if strict || new_uses_shift { "N" } else { "n" }, "New"),
-        ));
+        if self.group_by == crate::session::config::GroupByMode::Issues {
+            groups.push((
+                1,
+                kc('N'),
+                mk("N", "New issue"),
+            ));
+            groups.push((
+                1,
+                if strict { kctrl('r') } else { kc('R') },
+                mk(if strict { "^R" } else { "R" }, "Refresh issues"),
+            ));
+            if matches!(self.flat_items.get(self.cursor), Some(Item::WorkItem { .. })) {
+                groups.push((
+                    2,
+                    kc(if strict { 'E' } else { 'e' }),
+                    mk(if strict { "E" } else { "e" }, "Issue actions"),
+                ));
+                if matches!(
+                    self.flat_items.get(self.cursor),
+                    Some(Item::WorkItem { item, .. }) if item.attached_session_id.is_none()
+                ) {
+                    groups.push((
+                        2,
+                        if strict { kctrl('n') } else { kc('n') },
+                        mk(if strict { "^N" } else { "n" }, "New session"),
+                    ));
+                }
+            }
+        } else {
+            groups.push((
+                2,
+                kc(if strict || new_uses_shift { 'N' } else { 'n' }),
+                mk(if strict || new_uses_shift { "N" } else { "n" }, "New"),
+            ));
+        }
 
         // Priority 1: user's core daily workflow (message / del).
         // These survive the greedy pack under narrow-pane widths (iPad

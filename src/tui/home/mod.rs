@@ -38,7 +38,7 @@ use super::dialogs::ServeView;
 use super::dialogs::{
     ChangelogDialog, CommandPaletteDialog, ConfirmDialog, ContextMenuDialog,
     GroupDeleteOptionsDialog, GroupPickerDialog, HooksInstallDialog, InfoDialog, IntroDialog,
-    NewSessionData, NewSessionDialog, NoAgentsDialog, ProfilePickerDialog,
+    NewSessionData, NewSessionDialog, NoAgentsDialog, ProfilePickerDialog, IssueActionsDialog,
     ProjectSessionPickerDialog, ProjectsDialog, RenameDialog, RepoTrustDialog, RestartDialog,
     SnoozeDurationDialog, SortPickerDialog, UnifiedDeleteDialog, UpdateConfirmDialog,
     WorktreeNameDialog,
@@ -524,6 +524,7 @@ pub struct HomeView {
     pub(super) help_scroll: u16,
     pub(super) new_dialog: Option<NewSessionDialog>,
     pub(super) new_issue_dialog: Option<crate::tui::dialogs::NewIssueDialog>,
+    pub(super) issue_actions_dialog: Option<IssueActionsDialog>,
     pub(super) confirm_dialog: Option<ConfirmDialog>,
     pub(super) unified_delete_dialog: Option<UnifiedDeleteDialog>,
     pub(super) group_delete_options_dialog: Option<GroupDeleteOptionsDialog>,
@@ -1023,6 +1024,11 @@ pub struct HomeView {
     /// the top of the preview pane. Toggled with `i` and persisted to
     /// `app_state.show_preview_info`.
     pub(super) show_preview_info: bool,
+
+    /// Whether an attached Work Item uses the full preview-pane layout rather
+    /// than the compact layout. Cycled by the same `i` toggle as the info
+    /// header.
+    pub(super) issue_preview_expanded: bool,
 
     /// Collapsed state of the synthetic "Archived" sidebar section.
     /// Defaults to `true` (collapsed) so archived rows stay tucked at the
@@ -2171,6 +2177,7 @@ impl HomeView {
             help_scroll: 0,
             new_dialog: None,
             new_issue_dialog: None,
+            issue_actions_dialog: None,
             confirm_dialog: None,
             unified_delete_dialog: None,
             group_delete_options_dialog: None,
@@ -2316,6 +2323,7 @@ impl HomeView {
                 .as_ref()
                 .and_then(|c| c.app_state.show_preview_info)
                 .unwrap_or(true),
+            issue_preview_expanded: false,
             archived_section_collapsed: user_config
                 .as_ref()
                 .and_then(|c| c.app_state.archived_section_collapsed)
@@ -4635,9 +4643,28 @@ impl HomeView {
     }
 
     pub fn toggle_preview_info(&mut self) {
-        self.show_preview_info = !self.show_preview_info;
+        if !self.show_preview_info {
+            // Hidden -> compact.
+            self.show_preview_info = true;
+            self.issue_preview_expanded = false;
+        } else if self.issue_preview_expanded {
+            // Expanded -> hidden.
+            self.show_preview_info = false;
+            self.issue_preview_expanded = false;
+        } else {
+            // Compact -> expanded.
+            self.issue_preview_expanded = true;
+        }
         let show = self.show_preview_info;
         Self::persist_app_state("preview info", |s| s.show_preview_info = Some(show));
+    }
+
+    pub fn selected_attached_work_item(&self) -> bool {
+        matches!(
+            self.flat_items.get(self.cursor),
+            Some(crate::session::Item::WorkItem { item, .. })
+                if item.attached_session_id.is_some()
+        )
     }
 
     /// Forget the last non-live preview resize so the next render re-asserts the
@@ -4908,7 +4935,7 @@ impl HomeView {
             .filter(|work_item| work_item.item.state == crate::github::WorkItemState::Open)
             .cloned()
             .collect();
-        let closed: Vec<_> = self
+        let mut closed: Vec<_> = self
             .project_work_items
             .iter()
             .filter(|work_item| work_item.project_path == project.path)
@@ -4925,15 +4952,52 @@ impl HomeView {
                     registered.issue_label_priority.clone(),
                 )
             });
-        if let Some((order, labels)) = preferences.as_ref() {
-            if *order == crate::github::IssueSortOrder::LabelPriority {
-                open.sort_by(|a, b| {
-                    crate::github::work_item_priority(&a.item, *order, labels)
-                        .cmp(&crate::github::work_item_priority(&b.item, *order, labels))
-                        .then_with(|| a.item.issue_ref.cmp(&b.item.issue_ref))
-                });
-            }
-        }
+        let label_priority = preferences.as_ref().and_then(|(order, labels)| {
+            (*order == crate::github::IssueSortOrder::LabelPriority).then_some(labels)
+        });
+        let sort_items = |items: &mut Vec<ProjectWorkItem>| {
+            items.sort_by(|a, b| {
+                let primary = match self.sort_order {
+                    SortOrder::Newest => b.item.issue.created_at.cmp(&a.item.issue.created_at),
+                    SortOrder::Oldest => a.item.issue.created_at.cmp(&b.item.issue.created_at),
+                    SortOrder::LastActivity => b.item.issue.updated_at.cmp(&a.item.issue.updated_at),
+                    SortOrder::Attention => a
+                        .item
+                        .attention_state
+                        .map(|state| state.priority())
+                        .unwrap_or(u8::MAX)
+                        .cmp(
+                            &b.item
+                                .attention_state
+                                .map(|state| state.priority())
+                                .unwrap_or(u8::MAX),
+                        ),
+                    SortOrder::AZ => a.item.title.to_lowercase().cmp(&b.item.title.to_lowercase()),
+                    SortOrder::ZA => b.item.title.to_lowercase().cmp(&a.item.title.to_lowercase()),
+                };
+                primary
+                    .then_with(|| {
+                        label_priority
+                            .map(|labels| {
+                                crate::github::work_item_priority(
+                                    &a.item,
+                                    crate::github::IssueSortOrder::LabelPriority,
+                                    labels,
+                                )
+                                .cmp(&crate::github::work_item_priority(
+                                    &b.item,
+                                    crate::github::IssueSortOrder::LabelPriority,
+                                    labels,
+                                ))
+                            })
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .then_with(|| b.item.issue.updated_at.cmp(&a.item.issue.updated_at))
+                    .then_with(|| a.item.issue_ref.cmp(&b.item.issue_ref))
+            });
+        };
+        sort_items(&mut open);
+        sort_items(&mut closed);
 
         let mut items = vec![Item::Group {
             path: format!("__issues_project:{}", project.path),
@@ -6793,11 +6857,6 @@ impl HomeView {
         }
         self.registered_projects = merged;
         self.refresh_project_work_items();
-    }
-
-    pub(in crate::tui) fn refresh_issue_work_items(&mut self) {
-        self.refresh_project_work_items();
-        self.rebuild_flat_items();
     }
 
     fn refresh_project_work_items(&mut self) {

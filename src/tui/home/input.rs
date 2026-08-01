@@ -17,7 +17,7 @@ use crate::tui::dialogs::ServeAction;
 use crate::tui::dialogs::{
     builtin_commands, CommandPaletteDialog, ConfirmDialog, ContextMenuAction, ContextMenuDialog,
     DeleteDialogConfig, DialogResult, GroupDeleteOptionsDialog, HooksInstallDialog, InfoDialog,
-    IntroOutcome, NewIssueDialog, NewSessionData, NewSessionDialog, NoAgentsAction, PaletteAction,
+    IntroOutcome, IssueAction, IssueActionsDialog, NewIssueDialog, NewSessionData, NewSessionDialog, NoAgentsAction, PaletteAction,
     PaletteCommand, PaletteGroup, ProfilePickerAction, ProjectsDialog, RenameDialog, RenameMode,
     RepoTrustAction, RestartDialog, SendMessageDialog, TipsDialog, TipsOutcome,
     UnifiedDeleteDialog, WorktreeNameDialog,
@@ -1717,6 +1717,29 @@ impl HomeView {
                     return Some(Action::CreateGitHubIssue {
                         repository: data.repository,
                         request: data.request,
+                        new_labels: data.new_labels,
+                    });
+                }
+            }
+            return None;
+        }
+
+        if let Some(dialog) = &mut self.issue_actions_dialog {
+            match dialog.handle_key(key) {
+                DialogResult::Continue => {}
+                DialogResult::Cancel => self.issue_actions_dialog = None,
+                DialogResult::Submit(action) => {
+                    let Some(Item::WorkItem { item, .. }) = self.flat_items.get(self.cursor) else {
+                        self.issue_actions_dialog = None;
+                        return None;
+                    };
+                    let issue_ref = item.issue_ref.clone();
+                    self.issue_actions_dialog = None;
+                    return Some(match action {
+                        IssueAction::Edit { request, new_labels } => {
+                            Action::EditGitHubIssue { issue_ref, request, new_labels }
+                        }
+                        IssueAction::SetState(state) => Action::SetGitHubIssueState { issue_ref, state },
                     });
                 }
             }
@@ -2791,6 +2814,8 @@ impl HomeView {
             }
             ActionId::NewSession => self.open_new_session_dialog(),
             ActionId::NewIssue => self.open_new_issue_dialog(),
+            ActionId::RefreshIssues => self.sync_issue_work_items(),
+            ActionId::IssueActions => self.open_issue_actions_dialog(),
             ActionId::NewFromSelection => self.open_new_from_selection(),
             ActionId::NewFromProject => self.open_project_session_picker(),
             ActionId::AttachTerminal => return self.attach_terminal_for_selected(),
@@ -5085,7 +5110,37 @@ impl HomeView {
                 return;
             }
         };
-        self.new_issue_dialog = Some(NewIssueDialog::new(repository));
+        let mut label_options = self
+            .project_work_items
+            .iter()
+            .filter(|item| item.project_path == project.path)
+            .flat_map(|item| item.item.labels.iter().map(|label| label.name.clone()))
+            .collect::<Vec<_>>();
+        label_options.sort();
+        label_options.dedup();
+        self.new_issue_dialog = Some(NewIssueDialog::new(repository, label_options));
+    }
+
+    pub(super) fn open_issue_actions_dialog(&mut self) {
+        let Some(Item::WorkItem {
+            project_path,
+            item,
+            ..
+        }) = self.flat_items.get(self.cursor)
+        else {
+            self.info_dialog = Some(InfoDialog::sized_to_fit("Select an issue", "Select a Work Item first."));
+            return;
+        };
+        let project_path = project_path.clone();
+        let mut label_options = self
+            .project_work_items
+            .iter()
+            .filter(|work_item| work_item.project_path == project_path)
+            .flat_map(|work_item| work_item.item.labels.iter().map(|label| label.name.clone()))
+            .collect::<Vec<_>>();
+        label_options.sort();
+        label_options.dedup();
+        self.issue_actions_dialog = Some(IssueActionsDialog::new(item.issue.clone(), label_options));
     }
 
     fn seed_new_session_from_selected_work_item(&mut self) {

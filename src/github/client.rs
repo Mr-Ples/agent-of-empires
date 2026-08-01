@@ -292,6 +292,17 @@ impl GitHubClient {
         .await
     }
 
+    /// `POST /repos/{owner}/{repo}/labels`
+    pub async fn create_label(&self, owner: &str, repo: &str, name: &str) -> Result<()> {
+        let url = format!("{}/repos/{}/{}/labels", self.api_base, owner, repo);
+        self.send_json::<serde_json::Value>(self.http.post(url).json(&CreateLabelBody {
+            name,
+            color: "ededed",
+        }))
+        .await
+        .map(|_| ())
+    }
+
     /// `PATCH /repos/{owner}/{repo}/issues/{issue_number}`
     pub async fn edit_issue(
         &self,
@@ -389,6 +400,12 @@ struct CreateIssueBody<'a> {
     body: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     labels: &'a Vec<String>,
+}
+
+#[derive(Serialize)]
+struct CreateLabelBody<'a> {
+    name: &'a str,
+    color: &'static str,
 }
 
 #[derive(Serialize)]

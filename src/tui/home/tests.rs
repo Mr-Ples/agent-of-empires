@@ -9656,12 +9656,15 @@ fn project_mode_shows_work_item_project_without_sessions() {
 #[test]
 #[serial]
 fn issues_mode_scopes_work_items_to_active_project_and_collapses_closed() {
-    use crate::session::{config::GroupByMode, Project, ProjectScope};
+    use crate::session::{config::{GroupByMode, SortOrder}, Project, ProjectScope};
 
     let mut env = create_test_env_empty();
     env.view.group_by = GroupByMode::Issues;
-    env.view.registered_projects =
-        vec![Project::new("alpha", "/repos/alpha", ProjectScope::Global)];
+    env.view.sort_order = SortOrder::ZA;
+    let mut project = Project::new("alpha", "/repos/alpha", ProjectScope::Global);
+    project.issue_sort_order = crate::github::IssueSortOrder::LabelPriority;
+    project.issue_label_priority = vec!["p0".to_string(), "p1".to_string()];
+    env.view.registered_projects = vec![project];
     env.view.project_issue_states.insert(
         "/repos/alpha".to_string(),
         super::ProjectIssueReadState::Ready {
@@ -9670,8 +9673,26 @@ fn issues_mode_scopes_work_items_to_active_project_and_collapses_closed() {
         },
     );
     let mut closed = github_work_item("mr-ples/agent-of-empires#9", "Closed bug");
+    closed.labels = vec![crate::github::IssueLabel {
+        name: "p1".to_string(),
+        color: None,
+        description: None,
+    }];
+    closed.issue.labels = closed.labels.clone();
     closed.state = crate::github::WorkItemState::Closed;
     closed.issue.state = crate::github::IssueState::Closed;
+    let mut higher_priority_closed = github_work_item(
+        "mr-ples/agent-of-empires#8",
+        "Higher priority closed bug",
+    );
+    higher_priority_closed.labels = vec![crate::github::IssueLabel {
+        name: "p0".to_string(),
+        color: None,
+        description: None,
+    }];
+    higher_priority_closed.issue.labels = higher_priority_closed.labels.clone();
+    higher_priority_closed.state = crate::github::WorkItemState::Closed;
+    higher_priority_closed.issue.state = crate::github::IssueState::Closed;
     env.view.project_work_items = vec![
         super::ProjectWorkItem {
             project_label: "alpha".to_string(),
@@ -9682,6 +9703,11 @@ fn issues_mode_scopes_work_items_to_active_project_and_collapses_closed() {
             project_label: "alpha".to_string(),
             project_path: "/repos/alpha".to_string(),
             item: closed,
+        },
+        super::ProjectWorkItem {
+            project_label: "alpha".to_string(),
+            project_path: "/repos/alpha".to_string(),
+            item: higher_priority_closed,
         },
     ];
 
@@ -9699,7 +9725,7 @@ fn issues_mode_scopes_work_items_to_active_project_and_collapses_closed() {
     assert!(matches!(
         env.view.flat_items.get(2),
         Some(Item::Group { name, collapsed, session_count, .. })
-            if name == "Closed issues" && *collapsed && *session_count == 1
+            if name == "Closed issues" && *collapsed && *session_count == 2
     ));
     assert_eq!(env.view.shelf_start(), Some(2));
 
@@ -9707,6 +9733,10 @@ fn issues_mode_scopes_work_items_to_active_project_and_collapses_closed() {
     env.view.flat_items = env.view.build_flat_items();
     assert!(matches!(
         env.view.flat_items.get(3),
+        Some(Item::WorkItem { item, .. }) if item.issue_ref.number() == 8
+    ));
+    assert!(matches!(
+        env.view.flat_items.get(4),
         Some(Item::WorkItem { item, .. }) if item.issue_ref.number() == 9
     ));
 }
@@ -9846,7 +9876,7 @@ fn n_on_issues_mode_group_does_not_open_generic_session_dialog() {
 
 #[test]
 #[serial]
-fn shift_n_in_issues_mode_creates_issue_request_with_default_triage_label() {
+fn shift_n_in_issues_mode_creates_issue_request_with_selected_triage_label() {
     use crate::session::{config::GroupByMode, Project, ProjectScope};
 
     let mut env = create_test_env_empty();
@@ -9871,11 +9901,13 @@ fn shift_n_in_issues_mode_creates_issue_request_with_default_triage_label() {
         Some(Action::CreateGitHubIssue {
             repository,
             request,
+            new_labels: _,
         }) => {
             assert_eq!(repository.owner, "mr-ples");
             assert_eq!(repository.repo, "agent-of-empires");
             assert_eq!(request.title, "New issue");
-            assert!(request.apply_default_triage_label);
+            assert_eq!(request.labels, vec![crate::github::DEFAULT_TRIAGE_LABEL]);
+            assert!(!request.apply_default_triage_label);
         }
         other => panic!("expected CreateGitHubIssue action, got {other:?}"),
     }
