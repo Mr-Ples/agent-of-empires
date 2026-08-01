@@ -13,7 +13,7 @@ The dashboard is the home screen of the web app: a workspace sidebar on the left
 
 ### Status glyphs
 
-Each sidebar row carries an animated braille glyph encoding the session's state: a spinner of dots while **Running**, an orbiting dot while **Waiting** or **Creating**, a slow breathe while **Starting** or freshly idle. Errors render in the error color. The frame is offset by each session's creation time so rows don't pulse in lockstep.
+Each sidebar row carries an animated braille glyph encoding the session's runtime status: a spinner of dots while **Running**, an orbiting dot while **Waiting** or **Creating**, a slow breathe while **Starting** or freshly idle. **Waiting** means an approval/question prompt needs input and uses the prompt color; **Idle** uses the idle color. Errors render in the error color. The frame is offset by each session's creation time so rows don't pulse in lockstep.
 
 ## Creating a session
 

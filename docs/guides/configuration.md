@@ -117,6 +117,16 @@ mode = "plan"             # default mode, applied when the agent advertises one
 [agents.claude.status_map]
 Stop = "idle"
 Notification = "waiting"
+
+# Runtime status prompt tests. A match sets the session runtime status to
+# Waiting, which renders as the prompt/needs-input color.
+[session.runtime_prompt_patterns.opencode_confirm]
+agent = "opencode"
+pattern = "\\benter submit\\b.*\\besc dismiss\\b"
+
+# Disable a built-in prompt test by id or by agent:id.
+[session.disabled_built_in_runtime_prompt_patterns]
+"opencode:opencode-submit-dismiss" = true
 ```
 
 | Option | Default | Description |
@@ -139,6 +149,8 @@ Notification = "waiting"
 | `agent_acp_cmd` | `{}` | ACP launch command for a custom agent, enabling it to run in structured view (e.g., `{ "oc-superpowers" = "ocp run sp acp" }`). A custom agent with an entry here is structured view-capable; without one it stays tmux-only. Unlike `custom_agents`, the value is split into argv and run directly, with no shell. |
 | `acp.acp_defaults` | `{}` | Per-agent defaults for structured view startup (under the `[acp]` section, not `[session]`). `model` is forwarded when the worker starts; `effort` (thinking) and `mode` are applied through the agent's ACP config options (`thought_level`, `mode`) when advertised, and skipped with a warning otherwise. `effort_by_model` (a `{model = effort}` map) overrides `effort` for the resolved model. Editable per agent from the web dashboard (Structured view tab, Structured View Defaults). Example: `[acp.acp_defaults.opencode] model = "openai/gpt-5.5" effort = "high" mode = "plan"`. |
 | `agents.<name>.status_map` | `{}` | Trusted global/profile-only hook event to AoE status mappings. Valid statuses are `running`, `waiting`, `idle`, and `error`. Entries apply by event name to built-in hook defaults, so duplicate event names with different matchers all receive the same status; new event names are added to the installed hooks when the agent format supports event keys. Existing hook files update on the next hook install, usually a new or restarted session. Agent processes with installed status hooks receive `AOE_PROFILE`, so hook scripts can query the resolved map with `aoe -p "$AOE_PROFILE" profile show --status-map <agent> --json`. |
+| `session.runtime_prompt_patterns.<id>` | `{}` | Runtime status prompt tests. Each entry has `pattern` and optional `agent`; the regex is case-insensitive and matched against visible tmux pane text. A match forces runtime status to `Waiting`, so approval/question prompts render in the prompt color even if the agent's generic pane heuristic would otherwise say `Running` or `Idle`. |
+| `session.disabled_built_in_runtime_prompt_patterns` | `{}` | Built-in runtime prompt tests to disable. Keys can be just the pattern id or `agent:id`. Built-ins include `claude:approval-question`, `claude:ask-user-question`, `codex:codex-approval`, `opencode:opencode-submit-dismiss`, and `generic-yes-no`. |
 
 For Codex, AoE preserves existing `[hooks.state]` trust data and writes `~/.codex/config.toml` through `config.toml.lock` plus an atomic replace. This keeps repeated or concurrent AoE launches from duplicating hook blocks or leaving partial TOML.
 

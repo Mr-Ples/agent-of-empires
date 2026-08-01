@@ -203,6 +203,10 @@ fn split_bracketed_paste(text: &str) -> Vec<live_send::TmuxKey> {
     vec![live_send::TmuxKey::HexBytes(bytes)]
 }
 
+fn live_send_key_submits(key: &live_send::TmuxKey) -> bool {
+    matches!(key, live_send::TmuxKey::Named(name) if name == "Enter")
+}
+
 /// Map a hovered screen cell `(col, row)` into a forwarded app's 1-based
 /// mouse coordinate space, relative to its pane `pane` (the live-send target
 /// is sized to the preview output rect, so this maps directly), clamped
@@ -929,9 +933,18 @@ impl HomeView {
                 if let Some(sel) = self.preview_selection {
                     if sel.anchor == sel.extent {
                         self.preview_selection = None;
-                    } else if let Some(s) = self.preview_selection.as_mut() {
-                        s.finalized = true;
+                    } else {
+                        if let Some(s) = self.preview_selection.as_mut() {
+                            s.finalized = true;
+                        }
                         self.preview_copy_pending = true;
+                        // Capture immediately as well as during the next
+                        // paint. The issue detail pane is backed by rendered
+                        // text, not a tmux cache, so waiting for the paint
+                        // pass can otherwise leave mouse-up with nothing to
+                        // drain. The paint pass refreshes this from the same
+                        // source when it runs.
+                        self.preview_copy_text = self.extract_preview_selection_text();
                     }
                 }
             }
@@ -974,23 +987,30 @@ impl HomeView {
         // (see `wrapped_transcript`), so (row, column) slicing below maps
         // one-to-one onto the on-screen cells. Terminal previews keep
         // reading the tmux capture cache.
-        #[cfg(feature = "serve")]
-        let structured_lines = self
-            .structured_preview
-            .as_ref()
-            .filter(|v| {
-                self.selected_session
-                    .as_deref()
-                    .is_some_and(|id| id == v.session_id())
-            })
-            .map(|v| v.selection_text(width));
-        #[cfg(feature = "serve")]
-        let lines = match structured_lines.as_ref() {
-            Some(text) => text,
-            None => self.active_preview_cache().parsed_text.as_ref()?,
+        let lines = if let Some(text) = self.issue_preview_text.as_ref() {
+            text
+        } else {
+            #[cfg(feature = "serve")]
+            {
+                let structured_lines = self
+                    .structured_preview
+                    .as_ref()
+                    .filter(|v| {
+                        self.selected_session
+                            .as_deref()
+                            .is_some_and(|id| id == v.session_id())
+                    })
+                    .map(|v| v.selection_text(width));
+                match structured_lines.as_ref() {
+                    Some(text) => text,
+                    None => self.active_preview_cache().parsed_text.as_ref()?,
+                }
+            }
+            #[cfg(not(feature = "serve"))]
+            {
+                self.active_preview_cache().parsed_text.as_ref()?
+            }
         };
-        #[cfg(not(feature = "serve"))]
-        let lines = self.active_preview_cache().parsed_text.as_ref()?;
         // Resolve `from_bottom` distances to absolute indices against the
         // SAME `total_lines` the renderer used this frame, so the copied
         // range matches the painted highlight cell for cell.
@@ -4470,6 +4490,13 @@ impl HomeView {
         true
     }
 
+    fn issue_detail_visible(&self) -> bool {
+        matches!(
+            self.flat_items.get(self.cursor),
+            Some(Item::WorkItem { .. })
+        ) && (self.selected_session.is_none() || self.issue_preview_expanded)
+    }
+
     /// The previewed agent's cursor when a mouse button event over the preview
     /// should be forwarded to it instead of driving aoe's own UI: the pane must
     /// be a full-screen app with mouse tracking on (the same gate as the wheel's
@@ -4508,6 +4535,12 @@ impl HomeView {
         row: u16,
     ) -> bool {
         use crossterm::event::{MouseButton, MouseEventKind};
+        // Issue details are AoE-owned text, even when the selected issue is
+        // attached to a session. Never let a stale capture worker route their
+        // mouse events to the agent underneath the detail pane.
+        if self.issue_detail_visible() {
+            return false;
+        }
         let base = |b: MouseButton| match b {
             MouseButton::Left => 0u16,
             MouseButton::Middle => 1,
@@ -6315,6 +6348,7 @@ impl HomeView {
         match live_send::translate(key) {
             live_send::LiveDispatch::Ignore => {}
             live_send::LiveDispatch::Send(tmux_key) => {
+                let submitted = live_send_key_submits(&tmux_key);
                 if let Some(worker) = &self.live_send_worker {
                     worker.send(tmux_key);
                 }
@@ -6322,8 +6356,39 @@ impl HomeView {
                     self.flash_ctrl_c_hint();
                 }
                 self.stamp_last_accessed(&state.session_id);
+                if submitted && state.target == live_send::LiveSendTarget::Agent {
+                    self.mark_live_send_submission_running(&state.session_id);
+                }
             }
         }
+    }
+
+    fn mark_live_send_submission_running(&mut self, session_id: &str) {
+        let old_status = self.get_instance(session_id).map(|inst| inst.status);
+        self.mutate_instance(session_id, |inst| {
+            inst.status = Status::Running;
+            inst.last_error = None;
+            inst.idle_entered_at = None;
+            inst.live_status_baseline = Some(Status::Running);
+            inst.runtime_liveness =
+                Some(crate::session::liveness::SessionRuntimeLiveness::Active);
+            inst.runtime_needs_input = false;
+        });
+        if let Some(old) = old_status.filter(|old| *old != Status::Running) {
+            if let Some(inst) = self.get_instance(session_id).cloned() {
+                self.handle_status_transition(&inst, old, Status::Running, false, true);
+            }
+            self.persist_passive_status_transition(session_id, false);
+        }
+        if self
+            .get_instance(session_id)
+            .is_some_and(|inst| inst.issue_ref.is_some())
+        {
+            self.refresh_project_work_items();
+            self.rebuild_flat_items();
+        }
+        self.reset_status_refresh();
+        self.request_status_refresh();
     }
 
     /// Exit live-send before an activation hands the terminal to a tmux

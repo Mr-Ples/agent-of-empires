@@ -1020,6 +1020,11 @@ pub struct HomeView {
     /// after the draw that paints the finalized highlight.
     pub(super) preview_copy_text: Option<String>,
 
+    /// Lines rendered by the issue detail preview. Issue details do not use
+    /// a tmux preview cache, but drag-select copy still needs the same source
+    /// text that was painted on screen.
+    pub(super) issue_preview_text: Option<ratatui::text::Text<'static>>,
+
     /// Show the info header (profile/tool/path/status/sandbox/worktree) at
     /// the top of the preview pane. Toggled with `i` and persisted to
     /// `app_state.show_preview_info`.
@@ -2319,6 +2324,7 @@ impl HomeView {
             preview_selection: None,
             preview_copy_pending: false,
             preview_copy_text: None,
+            issue_preview_text: None,
             show_preview_info: user_config
                 .as_ref()
                 .and_then(|c| c.app_state.show_preview_info)
@@ -2886,6 +2892,9 @@ impl HomeView {
             .get_instance(&update.id)
             .map(|i| (i.status, i.runtime_liveness, i.runtime_needs_input));
         let old_status = old_snapshot.as_ref().map(|s| s.0);
+        let affects_work_item = self
+            .get_instance(&update.id)
+            .is_some_and(|inst| inst.issue_ref.is_some());
         let should_update = old_status.is_some_and(|s| {
             s != Status::Deleting
                 && s != Status::Creating
@@ -2977,6 +2986,10 @@ impl HomeView {
                     if should_mark_unread {
                         self.mutate_instance(&update.id, |inst| inst.mark_unread());
                     }
+                    if affects_work_item {
+                        self.refresh_project_work_items();
+                        self.rebuild_flat_items();
+                    }
 
                     if let Some(inst) = self.get_instance(&update.id).cloned() {
                         self.handle_status_transition(
@@ -2985,6 +2998,10 @@ impl HomeView {
                     }
                 } else if liveness_changed {
                     self.persist_passive_status_transition(&update.id, false);
+                    if affects_work_item {
+                        self.refresh_project_work_items();
+                        self.rebuild_flat_items();
+                    }
                 }
             }
         } else if new_last_accessed.is_some() {
@@ -5009,18 +5026,6 @@ impl HomeView {
             archived_at: None,
         }];
 
-        if let Some(notice) = self.issue_mode_notice_for_project(project) {
-            items.push(Item::Group {
-                path: format!("__issues_notice:{}", project.path),
-                name: notice,
-                depth: 1,
-                collapsed: true,
-                session_count: 0,
-                profile: None,
-                archived_at: None,
-            });
-        }
-
         for work_item in open {
             items.push(Item::WorkItem {
                 project_path: work_item.project_path,
@@ -5051,6 +5056,11 @@ impl HomeView {
         }
 
         items
+    }
+
+    pub(super) fn issue_mode_notice(&self) -> Option<String> {
+        self.active_issue_project()
+            .and_then(|project| self.issue_mode_notice_for_project(project))
     }
 
     fn active_issue_project(&self) -> Option<&crate::session::Project> {
@@ -6881,12 +6891,8 @@ impl HomeView {
                         issue_ref: issue_ref.clone(),
                         session_id: inst.id.clone(),
                         attention: AttentionInputs {
-                            runtime_liveness: inst
-                                .runtime_liveness
-                                .map(Self::runtime_liveness_from_session)
-                                .unwrap_or_else(|| Self::runtime_liveness_from_status(inst.status)),
-                            lifecycle_needs_input: inst.status == crate::session::Status::Waiting
-                                || inst.runtime_needs_input,
+                            runtime_liveness: Self::runtime_liveness_from_status(inst.status),
+                            lifecycle_needs_input: inst.status == crate::session::Status::Waiting,
                             structured_needs_input: false,
                         },
                     })
@@ -6954,25 +6960,6 @@ impl HomeView {
         });
         self.project_work_items = out;
         self.project_issue_states = states;
-    }
-
-    fn runtime_liveness_from_session(
-        value: crate::session::liveness::SessionRuntimeLiveness,
-    ) -> crate::github::RuntimeLiveness {
-        match value {
-            crate::session::liveness::SessionRuntimeLiveness::Active => {
-                crate::github::RuntimeLiveness::Active
-            }
-            crate::session::liveness::SessionRuntimeLiveness::Idle => {
-                crate::github::RuntimeLiveness::Idle
-            }
-            crate::session::liveness::SessionRuntimeLiveness::Stopped => {
-                crate::github::RuntimeLiveness::Stopped
-            }
-            crate::session::liveness::SessionRuntimeLiveness::Error => {
-                crate::github::RuntimeLiveness::Error
-            }
-        }
     }
 
     fn runtime_liveness_from_status(

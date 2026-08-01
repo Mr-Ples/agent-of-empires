@@ -130,6 +130,15 @@ pub struct WorkItemPromptPatternConfig {
     pub pattern: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RuntimePromptPatternConfig {
+    /// Built-in agent name this pattern applies to. Empty means every agent.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub agent: String,
+    /// Case-insensitive regular expression matched against visible pane text.
+    pub pattern: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkItemsConfig {
     /// Seconds of unchanged visible tmux pane text before issue liveness is idle.
@@ -1017,6 +1026,21 @@ pub struct SessionConfig {
     )]
     pub agent_detect_as: HashMap<String, String>,
 
+    /// Runtime status prompt detector patterns keyed by stable user-owned id.
+    /// A matching pattern forces the session runtime status to `Waiting`,
+    /// regardless of the agent's generic Running/Idle pane heuristic. These
+    /// patterns drive the session status dot/chip itself, not work-item
+    /// liveness.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[setting(skip)]
+    pub runtime_prompt_patterns: BTreeMap<String, RuntimePromptPatternConfig>,
+
+    /// Built-in runtime prompt detector ids to disable. Keys are id or
+    /// agent:id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[setting(skip)]
+    pub disabled_built_in_runtime_prompt_patterns: BTreeMap<String, bool>,
+
     /// ACP launch command for a custom agent, enabling it to run in the
     /// structured acp UI (e.g., "oc-superpowers" = "ocp run sp acp").
     /// A custom agent with an entry here is acp-capable; without one it
@@ -1483,6 +1507,8 @@ impl Default for SessionConfig {
             mouse_capture: true,
             custom_agents: HashMap::new(),
             agent_detect_as: HashMap::new(),
+            runtime_prompt_patterns: BTreeMap::new(),
+            disabled_built_in_runtime_prompt_patterns: BTreeMap::new(),
             agent_acp_cmd: HashMap::new(),
             strict_hotkeys: false,
             snooze_duration_minutes: 30,

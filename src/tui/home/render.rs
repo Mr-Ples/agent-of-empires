@@ -1014,7 +1014,7 @@ impl HomeView {
     fn render_list(&mut self, frame: &mut Frame, area: Rect, theme: &Theme, layout: PaneLayout) {
         self.list_area = area;
         let profile = self.active_profile_display();
-        let title = match &self.view_mode {
+        let mut title = match &self.view_mode {
             ViewMode::Structured => {
                 compose_list_title("aoe", profile, self.group_by, self.sort_order)
             }
@@ -1028,6 +1028,12 @@ impl HomeView {
                 self.sort_order,
             ),
         };
+        if self.group_by == GroupByMode::Issues {
+            if let Some(notice) = self.issue_mode_notice() {
+                title.push_str(" · ");
+                title.push_str(&notice);
+            }
+        }
         let (border_color, title_color) = match self.view_mode {
             ViewMode::Structured => (theme.border, theme.title),
             ViewMode::Terminal | ViewMode::Tool(_) => {
@@ -2556,12 +2562,14 @@ impl HomeView {
         }
 
         let total_lines = lines.len();
+        let text = Text::from(lines);
+        self.issue_preview_text = Some(text.clone());
         self.preview_pane_area = area;
         self.preview_visible_rows = area.height as usize;
         self.set_preview_text_view(area, total_lines);
         let scroll_top =
             preview::compute_scroll(total_lines, area.height as usize, self.preview_scroll_offset);
-        let preview = Paragraph::new(Text::from(lines))
+        let preview = Paragraph::new(text)
             .style(Style::default().fg(theme.text))
             .wrap(Wrap { trim: false })
             .scroll((scroll_top, 0));
@@ -2569,6 +2577,7 @@ impl HomeView {
     }
 
     fn render_preview(&mut self, frame: &mut Frame, area: Rect, theme: &Theme, layout: PaneLayout) {
+        self.issue_preview_text = None;
         let issue_without_session_selected = matches!(
             self.flat_items.get(self.cursor),
             Some(Item::WorkItem { item, .. })

@@ -424,15 +424,15 @@ function IssueRow({
 function attentionDotClass(state: AttentionState): string {
   switch (state) {
     case "needs_input":
-      return "bg-amber-400";
+      return "bg-status-waiting";
     case "error":
-      return "bg-red-500";
+      return "bg-status-error";
     case "idle":
-      return "bg-surface-500";
+      return "bg-status-idle";
     case "active":
-      return "bg-emerald-500";
+      return "bg-status-running";
     case "stopped":
-      return "bg-surface-600";
+      return "bg-status-stopped";
   }
 }
 

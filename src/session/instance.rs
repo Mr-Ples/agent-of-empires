@@ -5121,7 +5121,9 @@ impl Instance {
                 let reconciles_running = (detection_tool == "codex" || detection_tool == "claude")
                     && hook_status == Status::Running;
                 let reconciles_waiting = hook_status == Status::Waiting;
-                self.status = if reconciles_running || reconciles_waiting {
+                self.status = if runtime_prompt_matches(&pane_content, &detection_tool, self) {
+                    Status::Waiting
+                } else if reconciles_running || reconciles_waiting {
                     if reconciles_waiting {
                         tmux::reconcile_waiting_hook(&detection_tool, &pane_content)
                     } else if detection_tool == "codex" {
@@ -5140,7 +5142,11 @@ impl Instance {
         }
 
         let pane_content = session.capture_pane(50).unwrap_or_default();
-        let detected = tmux::detect_status_from_content(&pane_content, &detection_tool);
+        let detected = if runtime_prompt_matches(&pane_content, &detection_tool, self) {
+            Status::Waiting
+        } else {
+            tmux::detect_status_from_content(&pane_content, &detection_tool)
+        };
         tracing::trace!(target: "session.store",
             "status '{}': detected={:?}, cmd_override={}, custom_cmd={}",
             self.title,
@@ -5423,6 +5429,104 @@ fn prepend_exports(exports: &[String], wrapped: String) -> String {
     } else {
         format!("{}; {}", exports.join("; "), wrapped)
     }
+}
+
+struct RuntimePromptPattern {
+    id: &'static str,
+    agent: &'static str,
+    pattern: &'static str,
+}
+
+const BUILT_IN_RUNTIME_PROMPT_PATTERNS: &[RuntimePromptPattern] = &[
+    RuntimePromptPattern {
+        id: "approval-question",
+        agent: "claude",
+        pattern: r"\b(do you want to|would you like to proceed)\b",
+    },
+    RuntimePromptPattern {
+        id: "ask-user-question",
+        agent: "claude",
+        pattern: r"\benter to select\b.*\b(to navigate|esc to cancel)\b",
+    },
+    RuntimePromptPattern {
+        id: "codex-approval",
+        agent: "codex",
+        pattern: r"\b(approve|allow|permission request|enter to approve)\b",
+    },
+    RuntimePromptPattern {
+        id: "opencode-submit-dismiss",
+        agent: "opencode",
+        pattern: r"\benter submit\b.*\besc dismiss\b",
+    },
+    RuntimePromptPattern {
+        id: "generic-yes-no",
+        agent: "",
+        pattern: r"(\(y/n\)|\[y/n\]|\byes/no\b)",
+    },
+];
+
+fn runtime_prompt_matches(raw_content: &str, agent: &str, inst: &Instance) -> bool {
+    let profile = if inst.source_profile.is_empty() {
+        crate::session::Config::load_or_warn().default_profile
+    } else {
+        inst.source_profile.clone()
+    };
+    let config = crate::session::repo_config::resolve_config_with_repo_or_warn(
+        &profile,
+        Path::new(&inst.project_path),
+    );
+    let content = crate::tmux::utils::strip_ansi(raw_content).replace("\r\n", "\n");
+    let disabled = |pattern_agent: &str, id: &str| {
+        config
+            .session
+            .disabled_built_in_runtime_prompt_patterns
+            .get(id)
+            .copied()
+            .unwrap_or(false)
+            || config
+                .session
+                .disabled_built_in_runtime_prompt_patterns
+                .get(&format!("{pattern_agent}:{id}"))
+                .copied()
+                .unwrap_or(false)
+    };
+
+    for built_in in BUILT_IN_RUNTIME_PROMPT_PATTERNS {
+        if !built_in.agent.is_empty() && built_in.agent != agent {
+            continue;
+        }
+        if disabled(built_in.agent, built_in.id) {
+            continue;
+        }
+        if runtime_prompt_pattern_matches(&content, built_in.pattern) {
+            return true;
+        }
+    }
+
+    config
+        .session
+        .runtime_prompt_patterns
+        .values()
+        .any(|custom| {
+            (custom.agent.is_empty() || custom.agent == agent)
+                && runtime_prompt_pattern_matches(&content, &custom.pattern)
+        })
+}
+
+fn runtime_prompt_pattern_matches(content: &str, pattern: &str) -> bool {
+    regex::RegexBuilder::new(pattern)
+        .case_insensitive(true)
+        .dot_matches_new_line(true)
+        .build()
+        .map(|re| re.is_match(content))
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                target: "session.runtime_status",
+                pattern,
+                "invalid runtime prompt detector pattern: {e}"
+            );
+            false
+        })
 }
 
 fn resolve_detected_status(

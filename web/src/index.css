@@ -94,17 +94,14 @@
 
   /* Semantic Status */
   --color-status-running: #22c55e;
-  /* Waiting (blocked on user input) is the brightest amber in the brand
-     ramp so it wins on luminance against fresh-idle. Saturation alone
-     reads as DIMMER on dark backgrounds, so we lean on luminance. */
-  --color-status-waiting: #fbbf24;
-  --color-status-warning: #fbbf24;
-  /* Color of an Idle session whose Stop fired within the decay window.
-     Held constant for the full window (then snaps to `--color-status-idle`)
-     so the breathe rattle's pulse stays visually consistent. One rung
-     dimmer than waiting so the hierarchy reads bright > amber > slate. */
-  --color-status-fresh-idle: #f59e0b;
-  --color-status-idle: #71717a;
+  /* Waiting means blocked on a prompt and uses orange. Idle means parked
+     for the next turn and uses yellow. */
+  --color-status-waiting: #f97316;
+  --color-status-warning: #f97316;
+  /* Fresh Idle uses the same yellow family as Idle; the separate token keeps
+     custom themes free to distinguish newly parked sessions if desired. */
+  --color-status-fresh-idle: #fbbf24;
+  --color-status-idle: #fbbf24;
   /* Unread accent: a finished turn the user hasn't viewed, or a manual flag.
      Sits between waiting and idle on the attention scale. Theme-projected
      from `theme.unread` (see resolved.rs); this default matches `zinc`. */

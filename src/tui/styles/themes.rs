@@ -266,9 +266,8 @@ impl Theme {
 
     /// Color for a session shown as dormant: a structured-view worker that was
     /// auto-stopped for inactivity and is resumable (see
-    /// `Instance::is_shown_dormant`). A dim amber, the `fresh_idle` attention
-    /// amber pulled halfway toward `dimmed`, so it reads as "parked, not
-    /// urgent" and stays distinct from both the bright fresh-idle amber and
+    /// `Instance::is_shown_dormant`). A dim idle color pulled halfway toward
+    /// `dimmed`, so it reads as "parked, not urgent" and stays distinct from
     /// the neutral `dimmed` used for a deliberate Stop. Derived from existing
     /// theme colors (not a stored field) so it needs no per-theme definition
     /// and stays out of the `color_fields_mut` drift guard. See #2250.
@@ -525,58 +524,20 @@ mod tests {
 
     #[test]
     fn theme_attention_hierarchy_holds() {
-        // Visual hierarchy: Waiting is the most attention-grabbing state;
-        // fresh-idle sits one rung dimmer; decayed idle blends in. On dark
-        // backgrounds "more attention" means HIGHER perceived luminance;
-        // on light backgrounds it means LOWER (the warm hues read against
-        // the bright surface). The check picks the comparison direction
-        // off the theme's own background. Rec. 601 is good enough for a
-        // pairwise sanity check, not a formal contrast metric.
-        //
-        // Heuristic limit: a custom user theme with a mid-tone background
-        // (luminance near the 128 cutoff) could fall on the wrong side of
-        // the dark/light split and fail this assertion in surprising
-        // ways. That's intentional, the test guards every built-in
-        // registered in `BUILTIN_THEMES`, not arbitrary user themes loaded
-        // from `~/.config/agent-of-empires/themes/*.toml`. If a custom-theme
-        // contributor needs to bypass this, they should pick `fresh_idle`
-        // themselves rather than rely on the test to validate it.
-        fn luminance(c: Color) -> f32 {
-            match c {
-                Color::Rgb(r, g, b) => 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32,
-                _ => 0.0,
-            }
-        }
         for name in builtin_theme_names() {
             let theme = load_theme(name);
-            let bg = luminance(theme.background);
-            let dark_bg = bg < 128.0;
-            let cmp = |label_a, a, label_b, b| {
-                if dark_bg {
-                    assert!(
-                        a > b,
-                        "{name} (dark bg): {label_a} luminance {a:.1} should exceed {label_b} {b:.1}"
-                    );
-                } else {
-                    assert!(
-                        a < b,
-                        "{name} (light bg): {label_a} luminance {a:.1} should be below {label_b} {b:.1}"
-                    );
-                }
-            };
-            let w = luminance(theme.waiting);
-            let f = luminance(theme.fresh_idle);
-            let i = luminance(theme.idle);
-            let u = luminance(theme.unread);
-            // Waiting beats fresh-idle.
-            cmp("waiting", w, "fresh_idle", f);
-            // Fresh-idle beats fully-decayed idle.
-            cmp("fresh_idle", f, "idle", i);
-            // Unread sits between waiting and idle (Attention sort
-            // promoter from #2088). Its relationship to fresh_idle is
-            // intentionally unconstrained: themes may tie them.
-            cmp("waiting", w, "unread", u);
-            cmp("unread", u, "idle", i);
+            assert_ne!(
+                theme.waiting, theme.idle,
+                "{name}: Waiting and Idle must remain distinct runtime status colors"
+            );
+            assert_ne!(
+                theme.waiting, theme.error,
+                "{name}: Waiting and Error must remain distinct runtime status colors"
+            );
+            assert_ne!(
+                theme.error, theme.idle,
+                "{name}: Error and Idle must remain distinct runtime status colors"
+            );
         }
     }
 }

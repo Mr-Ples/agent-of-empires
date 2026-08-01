@@ -10,14 +10,11 @@ text = "#cbd5e1"
 dimmed = "#64748b"
 hint = "#94a3b8"
 running = "#22c55e"
-# Waiting sits at the brightest point in the brand ramp (amber-400) so it
-# wins on luminance against the fresh-idle color. Saturation alone wasn't
-# enough on dark backgrounds; the deeper copper read as dimmer, not more
-# urgent. Fresh-idle drops one rung to amber-500 so the hierarchy is
-# bright-amber > copper-amber > slate.
-waiting = "#fbbf24"
-fresh_idle = "#f59e0b"
-idle = "#64748b"
+# Runtime status colors: Waiting means blocked on a prompt and uses orange.
+# Idle means parked for the next turn and uses yellow.
+waiting = "#f97316"
+fresh_idle = "#fbbf24"
+idle = "#fbbf24"
 unread = "#38bdf8"
 error = "#ef4444"
 terminal_active = "#0d9488"

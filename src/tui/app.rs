@@ -1603,6 +1603,10 @@ impl App {
                             // it and write to the user's clipboard.
                             if let Some(text) = self.home.take_preview_copy_text() {
                                 crate::tui::clipboard::copy_to_clipboard(&text);
+                                self.update_status = Some(UpdateStatus::transient(
+                                    "Copied to clipboard".to_string(),
+                                ));
+                                self.draw(terminal)?;
                             }
                             if let Some(action) = click_action {
                                 self.execute_action(action, terminal)?;
@@ -2882,6 +2886,19 @@ fn quit_intent(
     QuitIntent::Quit
 }
 
+fn should_toggle_attached_work_item_preview(
+    key: KeyEvent,
+    live_send_capturing: bool,
+    selected_attached_work_item: bool,
+) -> bool {
+    matches!(key.code, KeyCode::Char('i'))
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT)
+        && selected_attached_work_item
+        && !live_send_capturing
+}
+
 impl App {
     async fn handle_key(
         &mut self,
@@ -2890,12 +2907,11 @@ impl App {
     ) -> Result<()> {
         // The selected attached Work Item owns this preview toggle even when
         // its structured transcript is mounted and currently has focus.
-        if matches!(key.code, KeyCode::Char('i'))
-            && !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT)
-            && self.home.selected_attached_work_item()
-        {
+        if should_toggle_attached_work_item_preview(
+            key,
+            self.home.is_live_send_capturing(),
+            self.home.selected_attached_work_item(),
+        ) {
             self.home.toggle_preview_info();
             return Ok(());
         }
@@ -4580,6 +4596,38 @@ mod tests {
             quit_intent(KeyModifiers::NONE, true, false),
             QuitIntent::ConfirmDuringCreation,
         );
+    }
+
+    #[test]
+    fn attached_work_item_i_hotkey_is_disabled_while_live_send_captures_input() {
+        let plain_i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
+
+        assert!(should_toggle_attached_work_item_preview(
+            plain_i, false, true
+        ));
+        assert!(
+            !should_toggle_attached_work_item_preview(plain_i, true, true),
+            "live-send owns printable keys, so `i` must reach the agent input"
+        );
+    }
+
+    #[test]
+    fn attached_work_item_i_hotkey_requires_plain_i_and_attached_selection() {
+        assert!(!should_toggle_attached_work_item_preview(
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL),
+            false,
+            true,
+        ));
+        assert!(!should_toggle_attached_work_item_preview(
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+            false,
+            true,
+        ));
+        assert!(!should_toggle_attached_work_item_preview(
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            false,
+            false,
+        ));
     }
 
     #[test]

@@ -97,7 +97,7 @@ Alternative runtimes that share the same code paths:
 
 ### Status detection
 
-Each session reports `Running`, `Waiting`, `Idle`, or `Error` based on tmux pane content and agent-specific heuristics. The TUI, web dashboard, and structured view all show the same status column.
+Each session reports `Running`, `Waiting`, `Idle`, or `Error` based on status hooks, tmux pane content, and agent-specific heuristics. `Waiting` means a prompt needs input and renders in the prompt color; `Idle` means the agent is parked for the next turn and renders in the idle color. Runtime prompt tests are configurable with `[session.runtime_prompt_patterns]`.
 
 ### Auto-stop idle sessions
 

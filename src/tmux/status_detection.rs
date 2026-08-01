@@ -683,7 +683,14 @@ pub fn detect_opencode_status(raw_content: &str) -> Status {
 
     if contains_approval_prompt(
         &last_lines_lower,
-        &["continue?", "proceed?", "enter to select", "esc to cancel"],
+        &[
+            "continue?",
+            "proceed?",
+            "enter to select",
+            "esc to cancel",
+            "enter submit",
+            "esc dismiss",
+        ],
     ) {
         return Status::Waiting;
     }
@@ -3038,6 +3045,10 @@ Do you want to proceed?\n\
         );
         assert_eq!(
             detect_opencode_status("done! what else can i help with?\n>"),
+            Status::Waiting
+        );
+        assert_eq!(
+            detect_opencode_status("Choose an option\nenter submit · esc dismiss"),
             Status::Waiting
         );
     }

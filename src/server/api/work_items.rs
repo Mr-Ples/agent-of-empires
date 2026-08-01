@@ -14,7 +14,7 @@ use crate::github::{
     IssueSyncStore, IssueSyncer, RuntimeLiveness, WorkItemListProjection,
     WorkItemSessionAttachment,
 };
-use crate::session::{liveness::SessionRuntimeLiveness, Status};
+use crate::session::Status;
 
 use super::AppState;
 
@@ -80,8 +80,6 @@ pub async fn list_work_items(
                         issue_ref: issue_ref.clone(),
                         session_id: inst.id.clone(),
                         status: inst.status,
-                        runtime_liveness: inst.runtime_liveness,
-                        runtime_needs_input: inst.runtime_needs_input,
                     })
             })
             .collect()
@@ -89,18 +87,14 @@ pub async fn list_work_items(
     let attachments: Vec<WorkItemSessionAttachment> = attached_sessions
         .into_iter()
         .map(|attached| {
-            let session_needs_input =
-                attached.status == Status::Waiting || attached.runtime_needs_input;
+            let session_needs_input = attached.status == Status::Waiting;
             let structured_needs_input =
                 session_has_structured_pending(&state, &attached.session_id);
             WorkItemSessionAttachment {
                 issue_ref: attached.issue_ref,
                 session_id: attached.session_id,
                 attention: AttentionInputs {
-                    runtime_liveness: attached
-                        .runtime_liveness
-                        .map(runtime_liveness_from_session)
-                        .unwrap_or_else(|| runtime_liveness_from_status(attached.status)),
+                    runtime_liveness: runtime_liveness_from_status(attached.status),
                     lifecycle_needs_input: session_needs_input,
                     structured_needs_input,
                 },
@@ -384,17 +378,6 @@ struct AttachedSessionSnapshot {
     issue_ref: IssueRef,
     session_id: String,
     status: Status,
-    runtime_liveness: Option<SessionRuntimeLiveness>,
-    runtime_needs_input: bool,
-}
-
-fn runtime_liveness_from_session(liveness: SessionRuntimeLiveness) -> RuntimeLiveness {
-    match liveness {
-        SessionRuntimeLiveness::Active => RuntimeLiveness::Active,
-        SessionRuntimeLiveness::Idle => RuntimeLiveness::Idle,
-        SessionRuntimeLiveness::Stopped => RuntimeLiveness::Stopped,
-        SessionRuntimeLiveness::Error => RuntimeLiveness::Error,
-    }
 }
 
 fn runtime_liveness_from_status(status: Status) -> RuntimeLiveness {
