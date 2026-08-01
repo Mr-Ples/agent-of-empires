@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GitPullRequest, RefreshCw } from "lucide-react";
 import { fetchWorkItems } from "../lib/api";
-import type { AttentionState, ProjectInfo, SessionResponse, WorkItemProjection } from "../lib/types";
+import type {
+  AttentionState,
+  IssueSyncMetadata,
+  ProjectInfo,
+  SessionResponse,
+  WorkItemProjection,
+} from "../lib/types";
 import { issueLabelStyle } from "../lib/issueLabelColor";
 import { Tooltip } from "./Tooltip";
 
@@ -30,8 +36,11 @@ export function WorkItemsSidebar({
     slug: string;
     open: WorkItemProjection[];
     closed: WorkItemProjection[];
+    sync: IssueSyncMetadata | null;
   } | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [closedExpanded, setClosedExpanded] = useState(false);
+  const requestVersion = useRef(0);
   const selectedProject =
     githubProjects.find((p) => p.path === projectPath) ??
     githubProjects.find((p) => p.path === activeProjectPath) ??
@@ -50,17 +59,28 @@ export function WorkItemsSidebar({
     if (!slug) return;
     const [owner, repo] = slug.split("/");
     if (!owner || !repo) return;
+    const version = ++requestVersion.current;
     void fetchWorkItems(owner, repo).then((res) => {
+      if (version !== requestVersion.current) return;
+      if (!res) {
+        setLoadError(true);
+        return;
+      }
+      setLoadError(false);
       setSnapshot({
         slug,
-        open: res?.work_items.open ?? [],
-        closed: res?.work_items.closed ?? [],
+        open: res.work_items.open,
+        closed: res.work_items.closed,
+        sync: res.sync,
       });
     });
   }, [selectedProject?.github_repository]);
 
   useEffect(() => {
+    setLoadError(false);
     load();
+    const refreshTimer = window.setInterval(load, 10_000);
+    return () => window.clearInterval(refreshTimer);
   }, [load]);
 
   if (githubProjects.length === 0) {
@@ -78,11 +98,12 @@ export function WorkItemsSidebar({
   const selectedSlug = selectedProject?.github_repository ?? "";
   const items = snapshot?.slug === selectedSlug ? snapshot.open : [];
   const closed = snapshot?.slug === selectedSlug ? snapshot.closed : [];
-  const isLoading = !!selectedSlug && snapshot?.slug !== selectedSlug;
+  const sync = snapshot?.slug === selectedSlug ? snapshot.sync : null;
+  const isLoading = !!selectedSlug && snapshot?.slug !== selectedSlug && !loadError;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <IssueModeHeader onRefresh={load} loading={isLoading} />
+      <IssueModeHeader onRefresh={load} loading={isLoading} sync={sync} />
       {githubProjects.length > 1 && (
         <div className="px-3 pb-2">
           <select
@@ -102,6 +123,11 @@ export function WorkItemsSidebar({
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden border-t border-surface-700/60">
         {isLoading ? (
           <div className="px-4 py-8 text-center text-sm text-text-dim">Loading issues...</div>
+        ) : loadError && items.length === 0 && closed.length === 0 ? (
+          <div className="px-4 py-10 text-center">
+            <p className="text-sm font-medium text-text-secondary">Issues unavailable</p>
+            <p className="mt-1 text-[13px] text-text-muted">Refresh to retry loading the cached issue list.</p>
+          </div>
         ) : items.length === 0 && closed.length === 0 ? (
           <div className="px-4 py-10 text-center">
             <p className="text-sm font-medium text-text-secondary">No cached issues</p>
@@ -165,25 +191,75 @@ function withEffectiveAttachment(item: WorkItemProjection, attached: SessionResp
   return { ...item, attached_session_id: attached.id };
 }
 
-function IssueModeHeader({ loading, onRefresh }: { loading?: boolean; onRefresh?: () => void }) {
+function IssueModeHeader({
+  loading,
+  onRefresh,
+  sync,
+}: {
+  loading?: boolean;
+  onRefresh?: () => void;
+  sync?: IssueSyncMetadata | null;
+}) {
+  const syncLabel = sync ? issueSyncLabel(sync.status) : null;
+  const syncNeedsAttention = sync && sync.status !== "fresh";
+
   return (
-    <div className="flex items-center gap-1 px-3 pb-2 pt-3">
-      <span className="flex-1 text-sm text-text-muted">Issues</span>
-      {onRefresh && (
-        <Tooltip text="Refresh issues">
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={loading}
-            aria-label="Refresh issues"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-text-dim hover:bg-surface-800 hover:text-text-secondary disabled:opacity-40"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "motion-safe:animate-spin" : ""}`} />
-          </button>
-        </Tooltip>
+    <div className="px-3 pb-2 pt-3">
+      <div className="flex items-center gap-1">
+        <span className="flex-1 text-sm text-text-muted">Issues</span>
+        {onRefresh && (
+          <Tooltip text="Refresh issues">
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              aria-label="Refresh issues"
+              className="flex h-8 w-8 items-center justify-center rounded-md text-text-dim hover:bg-surface-800 hover:text-text-secondary disabled:opacity-40"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "motion-safe:animate-spin" : ""}`} />
+            </button>
+          </Tooltip>
+        )}
+      </div>
+      {syncLabel && (
+        <p
+          className={`mt-1 truncate text-[11px] ${syncNeedsAttention ? "text-amber-300" : "text-text-dim"}`}
+          title={sync?.message ?? syncLabel}
+          role={syncNeedsAttention ? "status" : undefined}
+        >
+          {syncLabel}
+          {sync?.synced_at ? ` · ${formatSyncTime(sync.synced_at)}` : ""}
+        </p>
       )}
     </div>
   );
+}
+
+function issueSyncLabel(status: IssueSyncMetadata["status"]): string {
+  switch (status) {
+    case "fresh":
+      return "Synced";
+    case "stale":
+      return "Sync stale, showing cached issues";
+    case "auth_required":
+      return "GitHub authentication required";
+    case "rate_limited":
+      return "GitHub rate limited, showing cached issues";
+    case "forbidden":
+      return "GitHub access denied, showing cached issues";
+    case "not_found":
+      return "GitHub repository not found";
+    case "network":
+      return "GitHub unavailable, showing cached issues";
+    case "api_failure":
+      return "GitHub sync failed, showing cached issues";
+  }
+}
+
+function formatSyncTime(value: string): string {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return value;
+  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function IssueRow({
