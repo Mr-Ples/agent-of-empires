@@ -3722,6 +3722,21 @@ impl App {
             self.pending_structured_view_open = Some(session_id.to_string());
             return Ok(());
         }
+
+        // Issue-created sessions are opened from the issue list, whose
+        // preview pane is already the user's working surface. Keep that
+        // surface in place and attach live-send to the new agent pane rather
+        // than taking over the terminal with a full tmux attach. This is
+        // intentionally scoped to issue-backed creates so ordinary `n`
+        // sessions continue to honor the user's attach-mode setting.
+        if self
+            .home
+            .get_instance(session_id)
+            .is_some_and(|inst| inst.issue_ref.is_some())
+        {
+            return self.execute_action(Action::EnterLiveSend(session_id.to_string()), terminal);
+        }
+
         let mode = self.home.default_attach_mode(session_id);
         tracing::debug!(target: "tui.input",
             session_id = %session_id,
