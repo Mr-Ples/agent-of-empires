@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { GitPullRequest, RefreshCw } from "lucide-react";
 import { fetchWorkItems } from "../lib/api";
 import type { AttentionState, ProjectInfo, SessionResponse, WorkItemProjection } from "../lib/types";
+import { issueLabelStyle } from "../lib/issueLabelColor";
 import { Tooltip } from "./Tooltip";
 
 interface Props {
@@ -226,13 +227,32 @@ function IssueRow({
           />
         )}
         <div className="min-w-0 flex-1">
-          <div
-            className={`truncate text-[13px] md:text-[14px] ${
-              item.state === "closed" ? "text-text-muted line-through" : "text-text-secondary"
-            }`}
-            title={item.title}
-          >
-            {item.title}
+          <div className="flex min-w-0 items-center gap-1">
+            <div
+              className={`min-w-0 flex-1 truncate text-[13px] md:text-[14px] ${
+                item.state === "closed" ? "text-text-muted line-through" : "text-text-secondary"
+              }`}
+              title={item.title}
+            >
+              {item.title}
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              {item.labels.slice(0, 2).map((label) => (
+                <span
+                  key={label.name}
+                  className="max-w-20 truncate rounded-full border border-surface-700/40 bg-surface-800/40 px-1 text-[9px] leading-4 text-text-dim"
+                  style={issueLabelStyle(label.color)}
+                  title={label.description ?? label.name}
+                >
+                  {label.name}
+                </span>
+              ))}
+              {item.labels.length > 2 && (
+                <span className="rounded-full border border-surface-700/40 bg-surface-800/40 px-1 text-[9px] leading-4 text-text-dim">
+                  +{item.labels.length - 2}
+                </span>
+              )}
+            </div>
           </div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-mono text-[10px] text-text-dim">{item.issue_ref}</span>
@@ -248,19 +268,6 @@ function IssueRow({
               </span>
             ) : null}
           </div>
-          {item.labels.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1">
-              {item.labels.slice(0, 3).map((label) => (
-                <span
-                  key={label.name}
-                  className="max-w-full truncate rounded border border-surface-700/40 bg-surface-800/40 px-1 text-[10px] text-text-dim"
-                  title={label.description ?? label.name}
-                >
-                  {label.name}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     </div>

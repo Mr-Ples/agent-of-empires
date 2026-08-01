@@ -7,6 +7,7 @@ use ratatui::widgets::*;
 use std::time::{Duration, Instant};
 
 use rattles::presets::prelude as spinners;
+use unicode_width::UnicodeWidthStr;
 
 use super::{
     get_indent, live_send, HomeView, TerminalMode, ViewMode, ICON_ARCHIVED_SECTION, ICON_COLLAPSED,
@@ -633,6 +634,31 @@ const LAST_ACTIVITY_SLOT: usize = 6;
 const LAST_ACTIVITY_RIGHT_MARGIN: usize = 1;
 
 const SELECTED_ROW_CONTRAST_RATIO: f32 = 3.0;
+const ISSUE_LABEL_CONTRAST_RATIO: f32 = 4.5;
+
+/// Turn a normalized GitHub label color into a readable terminal chip.
+/// Invalid, missing, or low-contrast colors deliberately use the neutral
+/// theme styling so remote metadata cannot make an issue row unreadable.
+fn issue_label_style(color: Option<&str>) -> Option<Style> {
+    let color = color?.trim_start_matches('#');
+    if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let red = u8::from_str_radix(&color[0..2], 16).ok()?;
+    let green = u8::from_str_radix(&color[2..4], 16).ok()?;
+    let blue = u8::from_str_radix(&color[4..6], 16).ok()?;
+    let background = Color::Rgb(red, green, blue);
+    let white = Color::Rgb(0xff, 0xff, 0xff);
+    let black = Color::Rgb(0x11, 0x18, 0x27);
+    let foreground = if has_min_contrast(white, background, ISSUE_LABEL_CONTRAST_RATIO) {
+        white
+    } else if has_min_contrast(black, background, ISSUE_LABEL_CONTRAST_RATIO) {
+        black
+    } else {
+        return None;
+    };
+    Some(Style::default().fg(foreground).bg(background))
+}
 
 fn selected_row_style(style: Style, theme: &Theme) -> Style {
     let Some(fg) = style.fg else {
@@ -1444,15 +1470,6 @@ impl HomeView {
             }
             Item::WorkItem { item, .. } => {
                 let mut parts = vec![format!("#{} {}", item.issue_ref.number(), item.title)];
-                if !item.labels.is_empty() {
-                    let labels = item
-                        .labels
-                        .iter()
-                        .map(|label| label.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    parts.push(format!("[{labels}]"));
-                }
                 if item.pull_request.is_some() {
                     parts.push("[PR]".to_string());
                 }
@@ -1748,7 +1765,64 @@ impl HomeView {
             text_style = text_style.add_modifier(ratatui::style::Modifier::BOLD);
         }
         line_spans.push(Span::styled(format!("{} ", icon), icon_style));
-        line_spans.push(Span::styled(text.into_owned(), text_style));
+        if let Item::WorkItem { item, .. } = item {
+            let label_texts: Vec<String> = item
+                .labels
+                .iter()
+                .take(2)
+                .enumerate()
+                .map(|(_, label)| format!("[{}]", truncate_to_width(&label.name, 10)))
+                .chain((item.labels.len() > 2).then(|| format!("+{}", item.labels.len() - 2)))
+                .collect();
+            let labels_width: usize = label_texts.iter().map(|label| label.width()).sum::<usize>()
+                + label_texts.len().saturating_sub(1);
+            let suffix = [
+                item.pull_request.is_some().then_some(" [PR]"),
+                item.attached_session_id.is_some().then_some(" [attached]"),
+                (item.sync.status == crate::github::IssueSyncStatus::Stale).then_some(" [stale]"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<String>();
+            let prefix_width = indent.width() + format!("{} ", icon).width();
+            let labels_padding = usize::from(!label_texts.is_empty());
+            let title_width = (list_width as usize)
+                .saturating_sub(prefix_width + labels_width + suffix.width() + labels_padding);
+            let title = format!("#{} {}", item.issue_ref.number(), item.title);
+            let title = truncate_to_width(&title, title_width);
+            let title_padding = title_width.saturating_sub(title.width());
+            line_spans.push(Span::styled(title, text_style));
+            if title_padding > 0 {
+                line_spans.push(Span::raw(" ".repeat(title_padding)));
+            }
+            line_spans.push(Span::styled(suffix, text_style));
+            if labels_padding > 0 {
+                line_spans.push(Span::raw(" "));
+            }
+            for (index, (label, label_text)) in item
+                .labels
+                .iter()
+                .take(2)
+                .zip(label_texts.iter())
+                .enumerate()
+            {
+                if index > 0 {
+                    line_spans.push(Span::raw(" "));
+                }
+                let label_style = issue_label_style(label.color.as_deref())
+                    .unwrap_or_else(|| Style::default().fg(theme.dimmed));
+                line_spans.push(Span::styled(label_text.clone(), label_style));
+            }
+            if item.labels.len() > 2 {
+                line_spans.push(Span::raw(" "));
+                line_spans.push(Span::styled(
+                    label_texts[2].clone(),
+                    Style::default().fg(theme.dimmed),
+                ));
+            }
+        } else {
+            line_spans.push(Span::styled(text.into_owned(), text_style));
+        }
 
         if let Item::Session { id, .. } = item {
             if let Some(inst) = self.get_instance(id) {
@@ -2839,14 +2913,22 @@ impl HomeView {
                             Line::from(Span::raw("")),
                         ];
                         if !item.labels.is_empty() {
-                            lines.push(Line::from(format!(
-                                "Labels: {}",
-                                item.labels
-                                    .iter()
-                                    .map(|label| label.name.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )));
+                            let mut label_line = vec![Span::raw("Labels: ")];
+                            for (index, label) in item.labels.iter().enumerate() {
+                                if index > 0 {
+                                    label_line.push(Span::raw(", "));
+                                }
+                                let style = issue_label_style(label.color.as_deref())
+                                    .unwrap_or_else(|| Style::default().fg(theme.dimmed));
+                                label_line.push(Span::styled(label.name.clone(), style));
+                                if let Some(description) = label.description.as_deref() {
+                                    label_line.push(Span::styled(
+                                        format!(" ({description})"),
+                                        Style::default().fg(theme.dimmed),
+                                    ));
+                                }
+                            }
+                            lines.push(Line::from(label_line));
                         }
                         if item.pull_request.is_some() {
                             lines.push(Line::from("Pull request: yes"));
@@ -4707,5 +4789,22 @@ mod tests {
         ] {
             assert_eq!(layout.preview_borders(), Borders::ALL);
         }
+    }
+
+    #[test]
+    fn issue_label_style_uses_readable_foreground() {
+        let style = issue_label_style(Some("0e8a16")).unwrap();
+        assert_eq!(style.bg, Some(Color::Rgb(0x0e, 0x8a, 0x16)));
+        assert_eq!(style.fg, Some(Color::Rgb(0xff, 0xff, 0xff)));
+
+        let style = issue_label_style(Some("fbca04")).unwrap();
+        assert_eq!(style.fg, Some(Color::Rgb(0x11, 0x18, 0x27)));
+    }
+
+    #[test]
+    fn issue_label_style_rejects_unsafe_colors() {
+        assert!(issue_label_style(None).is_none());
+        assert!(issue_label_style(Some("not-a-color")).is_none());
+        assert!(issue_label_style(Some("777777")).is_none());
     }
 }

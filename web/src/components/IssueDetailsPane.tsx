@@ -1,5 +1,6 @@
 import { ExternalLink, GitPullRequest, Tag } from "lucide-react";
 import type { WorkItemProjection } from "../lib/types";
+import { issueLabelStyle } from "../lib/issueLabelColor";
 
 interface Props {
   item: WorkItemProjection | null;
@@ -60,6 +61,7 @@ export function IssueDetailsPane({ item, onCreateSession, readOnly }: Props) {
             {item.labels.map((label) => (
               <span
                 key={label.name}
+                style={issueLabelStyle(label.color)}
                 title={label.description ?? label.name}
                 className="inline-flex max-w-full items-center gap-1 rounded border border-surface-700/50 bg-surface-800/50 px-1.5 py-0.5 text-[11px] text-text-secondary"
               >
