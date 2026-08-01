@@ -363,6 +363,7 @@ interface Props {
   sessions: SessionResponse[];
   activeProjectPath: string | null;
   selectedIssueRef: string | null;
+  pendingIssueRef?: string | null;
   onSelectIssue: (project: ProjectInfo, item: WorkItemProjection) => void;
   onCreateFromIssue: (project: ProjectInfo, item: WorkItemProjection) => void;
 }
@@ -2798,6 +2799,7 @@ export function WorkspaceSidebar({
   sessions,
   activeProjectPath,
   selectedIssueRef,
+  pendingIssueRef,
   onSelectIssue,
   onCreateFromIssue,
 }: Props) {
@@ -3468,6 +3470,7 @@ export function WorkspaceSidebar({
               sessions={sessions}
               activeProjectPath={activeProjectPath}
               selectedIssueRef={selectedIssueRef}
+              pendingIssueRef={pendingIssueRef}
               readOnly={readOnly}
               onSelectIssue={onSelectIssue}
               onCreateFromIssue={onCreateFromIssue}

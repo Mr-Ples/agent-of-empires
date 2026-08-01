@@ -356,6 +356,7 @@ function AppContent({
   const [selectedWorkItem, setSelectedWorkItem] = useState<{ project: ProjectInfo; item: WorkItemProjection } | null>(
     null,
   );
+  const [pendingIssueRef, setPendingIssueRef] = useState<string | null>(null);
   const pendingIssuePaneSessionIdRef = useRef<string | null>(null);
 
   // Active plugin sort (#2401): an ephemeral selection of a live `sort-key`
@@ -1659,6 +1660,7 @@ function AppContent({
           <IssueDetailsPane
             item={selectedWorkItem.item}
             onCreateSession={(item) => handleCreateIssueSession(selectedWorkItem.project, item)}
+            onDetachSession={handleDetachIssue}
             readOnly={serverAbout?.read_only}
           />
         );
@@ -1766,6 +1768,7 @@ function AppContent({
             onCreateSession={
               selectedWorkItem ? (item) => handleCreateIssueSession(selectedWorkItem.project, item) : undefined
             }
+            onDetachSession={handleDetachIssue}
             readOnly={serverAbout?.read_only}
           />
         );
@@ -2099,6 +2102,7 @@ function AppContent({
               sessions={sessions}
               activeProjectPath={activeSession?.main_repo_path ?? activeSession?.project_path ?? null}
               selectedIssueRef={selectedWorkItem?.item.issue_ref ?? null}
+              pendingIssueRef={pendingIssueRef}
               onSelectIssue={handleSelectIssue}
               onCreateFromIssue={handleCreateIssueSession}
             />
@@ -2120,6 +2124,11 @@ function AppContent({
                 if (window.innerWidth < 768) setSidebarOpen(false);
               }
               setShowSessionWizard(false);
+              setWizardPrefill(undefined);
+            }}
+            onIssueCreated={(issueRef) => {
+              toastBus.handler?.info(`Created ${issueRef}`);
+              setPendingIssueRef(issueRef);
               setWizardPrefill(undefined);
             }}
             prefill={wizardPrefill}

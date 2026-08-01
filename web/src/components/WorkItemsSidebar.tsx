@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GitPullRequest, RefreshCw } from "lucide-react";
 import { fetchWorkItems } from "../lib/api";
-import type {
-  AttentionState,
-  IssueSyncMetadata,
-  ProjectInfo,
-  SessionResponse,
-  WorkItemProjection,
-} from "../lib/types";
+import type { AttentionState, IssueSyncMetadata, ProjectInfo, SessionResponse, WorkItemProjection } from "../lib/types";
 import { issueLabelStyle } from "../lib/issueLabelColor";
 import { Tooltip } from "./Tooltip";
 
@@ -16,6 +10,7 @@ interface Props {
   sessions: SessionResponse[];
   activeProjectPath: string | null;
   selectedIssueRef: string | null;
+  pendingIssueRef?: string | null;
   readOnly?: boolean;
   onSelectIssue: (project: ProjectInfo, item: WorkItemProjection) => void;
   onCreateFromIssue: (project: ProjectInfo, item: WorkItemProjection) => void;
@@ -29,6 +24,7 @@ export function WorkItemsSidebar({
   readOnly,
   onSelectIssue,
   onCreateFromIssue,
+  pendingIssueRef,
 }: Props) {
   const githubProjects = useMemo(() => projects.filter((p) => p.github_repository), [projects]);
   const [projectPath, setProjectPath] = useState("");
@@ -73,11 +69,16 @@ export function WorkItemsSidebar({
         closed: res.work_items.closed,
         sync: res.sync,
       });
+      if (pendingIssueRef) {
+        const created = [...res.work_items.open, ...res.work_items.closed].find(
+          (item) => item.issue_ref === pendingIssueRef,
+        );
+        if (created && selectedProject) onSelectIssue(selectedProject, created);
+      }
     });
-  }, [selectedProject?.github_repository]);
+  }, [onSelectIssue, pendingIssueRef, selectedProject]);
 
   useEffect(() => {
-    setLoadError(false);
     load();
     const refreshTimer = window.setInterval(load, 10_000);
     return () => window.clearInterval(refreshTimer);

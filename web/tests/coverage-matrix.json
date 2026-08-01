@@ -797,7 +797,8 @@
       "risk": "medium",
       "specs": [
         "src/components/__tests__/WorkItemsPanel.test.tsx",
-        "src/components/__tests__/WorkItemsSidebar.test.tsx"
+        "src/components/__tests__/WorkItemsSidebar.test.tsx",
+        "src/lib/__tests__/githubIssueApi.test.ts"
       ],
       "components": [
         "web/src/components/WorkItemsPanel.tsx",

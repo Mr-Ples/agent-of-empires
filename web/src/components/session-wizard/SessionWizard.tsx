@@ -9,6 +9,7 @@ import {
   createSession,
   fetchVolumeIgnoresPreview,
   fetchIsGitRepo,
+  createGitHubIssue,
   markVolumeIgnoresGlobsAcknowledged,
   type VolumeIgnoresGlobPreview,
   type HooksNeedTrust,
@@ -125,10 +126,11 @@ export interface WizardPrefill {
 interface Props {
   onClose: () => void;
   onCreated: (session?: SessionResponse) => void;
+  onIssueCreated?: (issueRef: string) => void;
   prefill?: WizardPrefill;
 }
 
-export function SessionWizard({ onClose, onCreated, prefill }: Props) {
+export function SessionWizard({ onClose, onCreated, onIssueCreated, prefill }: Props) {
   const baseInitial = buildInitialData();
   const prefillData: WizardData = prefill
     ? {
@@ -164,6 +166,13 @@ export function SessionWizard({ onClose, onCreated, prefill }: Props) {
   // "More options" fold. Local UI state (not reducer/domain data),
   // persisted per browser so it stays open for users who expanded it.
   const [moreOpen, setMoreOpen] = useState(loadMoreOptionsOpen);
+  const [creationTab, setCreationTab] = useState<"session" | "issue">("session");
+  const [issueOwner, setIssueOwner] = useState("");
+  const [issueRepo, setIssueRepo] = useState("");
+  const [issueTitle, setIssueTitle] = useState("");
+  const [issueBody, setIssueBody] = useState("");
+  const [issueSubmitting, setIssueSubmitting] = useState(false);
+  const [issueError, setIssueError] = useState<string | null>(null);
   const toggleMoreOpen = useCallback(() => {
     setMoreOpen((open) => {
       const next = !open;
@@ -353,6 +362,26 @@ export function SessionWizard({ onClose, onCreated, prefill }: Props) {
     await runCreate(body, d.tool);
   };
 
+  const handleIssueSubmit = async () => {
+    const owner = issueOwner.trim();
+    const repo = issueRepo.trim();
+    const title = issueTitle.trim();
+    if (!owner || !repo || !title) {
+      setIssueError("Repository and title are required");
+      return;
+    }
+    setIssueSubmitting(true);
+    setIssueError(null);
+    const result = await createGitHubIssue({ owner, repo, title, body: issueBody.trim() || undefined });
+    setIssueSubmitting(false);
+    if (!result.ok || !result.issue) {
+      setIssueError(result.message ?? "Issue creation failed");
+      return;
+    }
+    onIssueCreated?.(result.issue.issue_ref);
+    onClose();
+  };
+
   const runCreate = async (body: CreateSessionRequest, tool: string) => {
     const result = await createSession(body);
     if (result.ok) {
@@ -410,7 +439,7 @@ export function SessionWizard({ onClose, onCreated, prefill }: Props) {
         className="relative w-full max-w-lg bg-surface-800 border border-surface-700/30 rounded-lg flex flex-col max-h-[min(720px,90vh)]"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-surface-700/20">
-          <h1 className="text-sm font-medium text-text-secondary">New session</h1>
+          <h1 className="text-sm font-medium text-text-secondary">Create</h1>
           <button
             onClick={onClose}
             className="w-8 h-8 flex items-center justify-center text-text-dim hover:text-text-secondary cursor-pointer rounded-md hover:bg-surface-700/50 transition-colors"
@@ -419,81 +448,166 @@ export function SessionWizard({ onClose, onCreated, prefill }: Props) {
             &times;
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
-          <ProjectStep
-            data={state.data}
-            onChange={handleChange}
-            initialTab={prefill?.initialTab}
-            agents={state.agents}
-          />
-
-          <div>
-            <label className="block text-sm text-text-dim mb-1.5">Session title</label>
-            <input
-              type="text"
-              value={state.data.title}
-              onChange={(e) => handleChange("title", e.target.value)}
-              placeholder="Auto-generated if empty"
-              className="w-full bg-surface-900 border border-surface-700 rounded-lg px-3 py-2.5 text-base font-mono text-text-primary placeholder:text-text-dim focus:border-brand-600 focus:outline-none"
-            />
-            <p className="text-xs text-text-dim mt-1">
-              Shown in the dashboard. Renaming it later does not rename the git branch.
-            </p>
-          </div>
-
-          <div>
-            <h2 className="text-lg font-semibold text-text-primary mb-1">Which AI agent?</h2>
-            <p className="text-sm text-text-muted mb-5">Pick the coding assistant for this session.</p>
-            <AgentPickerEssentials data={state.data} onChange={handleChange} agents={state.agents} />
-          </div>
-
-          <div className="border-t border-surface-700/20 pt-4">
+        <div className="flex border-b border-surface-700/20 px-5" role="tablist" aria-label="Creation type">
+          {(["session", "issue"] as const).map((tab) => (
             <button
+              key={tab}
               type="button"
-              onClick={toggleMoreOpen}
-              aria-expanded={moreOpen}
-              className="flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-text-primary py-1 cursor-pointer w-full"
+              role="tab"
+              aria-selected={creationTab === tab}
+              onClick={() => setCreationTab(tab)}
+              className={`border-b-2 px-3 py-2 text-sm ${
+                creationTab === tab
+                  ? "border-brand-500 text-text-primary"
+                  : "border-transparent text-text-muted hover:text-text-secondary"
+              }`}
             >
-              <svg
-                className={`w-3 h-3 transition-transform ${moreOpen ? "rotate-90" : ""}`}
-                viewBox="0 0 12 12"
-                fill="currentColor"
-              >
-                <path
-                  d="M4.5 2l4.5 4-4.5 4"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  fill="none"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              More options
+              {tab === "session" ? "Session" : "GitHub Issue"}
             </button>
-            {moreOpen && (
-              <div className="mt-4 space-y-6">
-                <SessionStep data={state.data} onChange={handleChange} embedded />
-                <AgentOptions
-                  data={state.data}
-                  onChange={handleChange}
-                  agents={state.agents}
-                  profiles={state.profiles}
-                  dockerAvailable={state.dockerAvailable}
-                  onApplyProfileDefaults={handleApplyProfileDefaults}
-                  commandMaps={commandMaps}
-                />
+          ))}
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
+          {creationTab === "issue" ? (
+            <div className="space-y-4" role="tabpanel" aria-label="GitHub Issue">
+              <div>
+                <h2 className="text-lg font-semibold text-text-primary">New GitHub Issue</h2>
+                <p className="mt-1 text-sm text-text-muted">
+                  Creates an unattached Work Item with the needs-triage label.
+                </p>
               </div>
-            )}
+              {issueError && <p className="rounded-md bg-red-900/20 px-3 py-2 text-sm text-red-300">{issueError}</p>}
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm text-text-secondary">
+                  Owner
+                  <input
+                    value={issueOwner}
+                    onChange={(e) => setIssueOwner(e.target.value)}
+                    placeholder="owner"
+                    className="mt-1 w-full rounded-md border border-surface-700 bg-surface-900 px-3 py-2 text-text-primary"
+                  />
+                </label>
+                <label className="text-sm text-text-secondary">
+                  Repository
+                  <input
+                    value={issueRepo}
+                    onChange={(e) => setIssueRepo(e.target.value)}
+                    placeholder="repo"
+                    className="mt-1 w-full rounded-md border border-surface-700 bg-surface-900 px-3 py-2 text-text-primary"
+                  />
+                </label>
+              </div>
+              <label className="block text-sm text-text-secondary">
+                Title
+                <input
+                  value={issueTitle}
+                  onChange={(e) => setIssueTitle(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-surface-700 bg-surface-900 px-3 py-2 text-text-primary"
+                />
+              </label>
+              <label className="block text-sm text-text-secondary">
+                Body
+                <textarea
+                  value={issueBody}
+                  onChange={(e) => setIssueBody(e.target.value)}
+                  rows={8}
+                  className="mt-1 w-full resize-y rounded-md border border-surface-700 bg-surface-900 px-3 py-2 text-text-primary"
+                />
+              </label>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleIssueSubmit}
+                  disabled={issueSubmitting}
+                  className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-500 disabled:opacity-50"
+                >
+                  {issueSubmitting ? "Creating..." : "Create issue"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <ProjectStep
+                data={state.data}
+                onChange={handleChange}
+                initialTab={prefill?.initialTab}
+                agents={state.agents}
+              />
+
+              {creationTab === "session" && (
+                <>
+                  <div>
+                    <label className="block text-sm text-text-dim mb-1.5">Session title</label>
+                    <input
+                      type="text"
+                      value={state.data.title}
+                      onChange={(e) => handleChange("title", e.target.value)}
+                      placeholder="Auto-generated if empty"
+                      className="w-full bg-surface-900 border border-surface-700 rounded-lg px-3 py-2.5 text-base font-mono text-text-primary placeholder:text-text-dim focus:border-brand-600 focus:outline-none"
+                    />
+                    <p className="text-xs text-text-dim mt-1">
+                      Shown in the dashboard. Renaming it later does not rename the git branch.
+                    </p>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <h2 className="text-lg font-semibold text-text-primary mb-1">Which AI agent?</h2>
+                <p className="text-sm text-text-muted mb-5">Pick the coding assistant for this session.</p>
+                <AgentPickerEssentials data={state.data} onChange={handleChange} agents={state.agents} />
+              </div>
+
+              <div className="border-t border-surface-700/20 pt-4">
+                <button
+                  type="button"
+                  onClick={toggleMoreOpen}
+                  aria-expanded={moreOpen}
+                  className="flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-text-primary py-1 cursor-pointer w-full"
+                >
+                  <svg
+                    className={`w-3 h-3 transition-transform ${moreOpen ? "rotate-90" : ""}`}
+                    viewBox="0 0 12 12"
+                    fill="currentColor"
+                  >
+                    <path
+                      d="M4.5 2l4.5 4-4.5 4"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  More options
+                </button>
+                {moreOpen && (
+                  <div className="mt-4 space-y-6">
+                    <SessionStep data={state.data} onChange={handleChange} embedded />
+                    <AgentOptions
+                      data={state.data}
+                      onChange={handleChange}
+                      agents={state.agents}
+                      profiles={state.profiles}
+                      dockerAvailable={state.dockerAvailable}
+                      onApplyProfileDefaults={handleApplyProfileDefaults}
+                      commandMaps={commandMaps}
+                    />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+        {creationTab === "session" && (
+          <div className="px-5 py-4 border-t border-surface-700/20">
+            <LaunchFooter
+              data={state.data}
+              isSubmitting={state.isSubmitting}
+              error={state.error}
+              onSubmit={handleSubmit}
+            />
           </div>
-        </div>
-        <div className="px-5 py-4 border-t border-surface-700/20">
-          <LaunchFooter
-            data={state.data}
-            isSubmitting={state.isSubmitting}
-            error={state.error}
-            onSubmit={handleSubmit}
-          />
-        </div>
+        )}
       </div>
       {globConfirm && (
         <VolumeIgnoresGlobDialog globs={globConfirm.globs} onConfirm={handleGlobConfirm} onCancel={handleGlobCancel} />

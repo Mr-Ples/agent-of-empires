@@ -45,6 +45,68 @@ export function fetchWorkItems(owner: string, repo: string): Promise<WorkItemsRe
   return fetchJson<WorkItemsResponse>(`/api/work-items?${params.toString()}`);
 }
 
+export async function createGitHubIssue(input: {
+  owner: string;
+  repo: string;
+  title: string;
+  body?: string;
+}): Promise<{ ok: boolean; issue?: WorkItemsResponse["work_items"]["open"][number]["issue"]; message?: string }> {
+  try {
+    const res = await fetch("/api/github/issues", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => ({}));
+    return res.ok
+      ? { ok: true, issue: data.issue }
+      : { ok: false, message: typeof data.message === "string" ? data.message : `Server error (${res.status})` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Network error" };
+  }
+}
+
+export async function editGitHubIssue(
+  issueRef: string,
+  input: { title?: string; body?: string; labels?: string[] },
+): Promise<{ ok: boolean; issue?: WorkItemsResponse["work_items"]["open"][number]["issue"]; message?: string }> {
+  return mutateGitHubIssue(issueRef, "", input);
+}
+
+export async function setGitHubIssueState(
+  issueRef: string,
+  state: "open" | "closed",
+): Promise<{ ok: boolean; issue?: WorkItemsResponse["work_items"]["open"][number]["issue"]; message?: string }> {
+  return mutateGitHubIssue(issueRef, "/state", { state });
+}
+
+async function mutateGitHubIssue(
+  issueRef: string,
+  suffix: string,
+  input: Record<string, unknown>,
+): Promise<{ ok: boolean; issue?: WorkItemsResponse["work_items"]["open"][number]["issue"]; message?: string }> {
+  const match = issueRef.match(/^([^/]+)\/([^#]+)#(\d+)$/);
+  if (!match) return { ok: false, message: "Invalid issue reference" };
+  const [, owner, repo, number] = match;
+  if (!owner || !repo || !number) return { ok: false, message: "Invalid issue reference" };
+  try {
+    const res = await fetch(
+      `/api/github/issues/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${number}${suffix}`,
+      {
+        method: suffix ? "PUT" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    return res.ok
+      ? { ok: true, issue: data.issue }
+      : { ok: false, message: typeof data.message === "string" ? data.message : `Server error (${res.status})` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Network error" };
+  }
+}
+
 export interface ConversationSearchHit {
   session_id: string;
   seq: number;
