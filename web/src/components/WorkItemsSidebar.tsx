@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GitPullRequest, RefreshCw, Search } from "lucide-react";
-import { fetchWorkItems } from "../lib/api";
+import { fetchWorkItems, recoverGitHubAuth } from "../lib/api";
 import type { AttentionState, IssueSyncMetadata, ProjectInfo, SessionResponse, WorkItemProjection } from "../lib/types";
 import { issueLabelStyle } from "../lib/issueLabelColor";
 import { Tooltip } from "./Tooltip";
@@ -135,11 +135,25 @@ export function WorkItemsSidebar({
   const items = order(rawItems);
   const closed = order(rawClosed);
   const sync = snapshot?.slug === selectedSlug ? snapshot.sync : null;
+  const authRequired = sync?.status === "auth_required";
   const isLoading = !!selectedSlug && snapshot?.slug !== selectedSlug && !loadError;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <IssueModeHeader onRefresh={load} loading={isLoading} sync={sync} />
+      <IssueModeHeader
+        onRefresh={load}
+        loading={isLoading}
+        sync={sync}
+        onRecoverAuth={
+          authRequired
+            ? async () => {
+                const result = await recoverGitHubAuth();
+                if (!result.ok) setLoadError(true);
+                load();
+              }
+            : undefined
+        }
+      />
       {githubProjects.length > 1 && (
         <div className="px-3 pb-2">
           <select
@@ -241,10 +255,12 @@ function IssueModeHeader({
   loading,
   onRefresh,
   sync,
+  onRecoverAuth,
 }: {
   loading?: boolean;
   onRefresh?: () => void;
   sync?: IssueSyncMetadata | null;
+  onRecoverAuth?: () => void;
 }) {
   const syncLabel = sync ? issueSyncLabel(sync.status) : null;
   const syncNeedsAttention = sync && sync.status !== "fresh";
@@ -276,6 +292,15 @@ function IssueModeHeader({
           {syncLabel}
           {sync?.synced_at ? ` · ${formatSyncTime(sync.synced_at)}` : ""}
         </p>
+      )}
+      {onRecoverAuth && (
+        <button
+          type="button"
+          onClick={onRecoverAuth}
+          className="mt-2 rounded bg-brand-600 px-2 py-1 text-xs text-white hover:bg-brand-500"
+        >
+          Sign in to GitHub
+        </button>
       )}
     </div>
   );

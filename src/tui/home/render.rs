@@ -1770,8 +1770,7 @@ impl HomeView {
                 .labels
                 .iter()
                 .take(2)
-                .enumerate()
-                .map(|(_, label)| format!("[{}]", truncate_to_width(&label.name, 10)))
+                .map(|label| format!("[{}]", truncate_to_width(&label.name, 10)))
                 .chain((item.labels.len() > 2).then(|| format!("+{}", item.labels.len() - 2)))
                 .collect();
             let labels_width: usize = label_texts.iter().map(|label| label.width()).sum::<usize>()

@@ -789,6 +789,39 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_configs_label_prompt_rules_allow_project_override_and_addition() {
+        let mut global = Config::default();
+        global.work_items.label_prompt_rules.insert(
+            "review".to_string(),
+            crate::github::LabelPromptRule {
+                labels: vec!["ready-for-agent".to_string()],
+                instruction: "Review the issue carefully".to_string(),
+            },
+        );
+
+        let profile = profile_from(json!({"work_items": {
+            "label_prompt_rules": {
+                "review": {
+                    "labels": ["needs-review"],
+                    "instruction": "Ask for review before editing"
+                },
+                "testing": {
+                    "labels": ["bug"],
+                    "instruction": "Add regression coverage"
+                }
+            }
+        }}));
+
+        let merged = merge_configs(global, &profile);
+        assert_eq!(merged.work_items.label_prompt_rules.len(), 2);
+        assert_eq!(
+            merged.work_items.label_prompt_rules["review"].instruction,
+            "Ask for review before editing"
+        );
+        assert!(merged.work_items.label_prompt_rules.contains_key("testing"));
+    }
+
+    #[test]
     fn generic_merge_inherits_with_empty_overrides() {
         let mut global = Config::default();
         global.acp.max_concurrent_workers = 7;

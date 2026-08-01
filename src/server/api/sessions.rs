@@ -5129,20 +5129,27 @@ pub async fn create_session(
                 None
             }
         });
+    let profile = body.profile.unwrap_or_else(|| state.profile.clone());
     #[cfg(feature = "serve")]
     let can_deliver_issue_context = body.view == crate::session::View::Structured;
     #[cfg(not(feature = "serve"))]
     let can_deliver_issue_context = false;
     let pending_initial_turn =
         if can_deliver_issue_context && body.inject_issue_context.unwrap_or(issue_ref.is_some()) {
+            let config = crate::session::repo_config::resolve_config_with_repo_or_warn(
+                &profile,
+                std::path::Path::new(&body.path),
+            );
             issue_ref.as_ref().map(|issue_ref| {
-                crate::github::issue_context_prompt(issue_ref, cached_issue_record.as_ref())
+                crate::github::issue_context_prompt_with_rules(
+                    issue_ref,
+                    cached_issue_record.as_ref(),
+                    &config.work_items.label_prompt_rules,
+                )
             })
         } else {
             None
         };
-
-    let profile = body.profile.unwrap_or_else(|| state.profile.clone());
 
     let spec = crate::server::session_spawn::StructuredSessionSpec {
         title,

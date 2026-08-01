@@ -120,23 +120,7 @@ fn create_github_issue_blocking(
 }
 
 pub(crate) fn github_issue_token_impl() -> Option<String> {
-    ["GITHUB_TOKEN", "GH_TOKEN"]
-        .into_iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .map(|value| value.trim().to_string())
-        .find(|value| !value.is_empty())
-        .or_else(|| {
-            let output = std::process::Command::new("gh")
-                .args(["auth", "token"])
-                .stderr(Stdio::null())
-                .output()
-                .ok()?;
-            if !output.status.success() {
-                return None;
-            }
-            let token = String::from_utf8(output.stdout).ok()?.trim().to_string();
-            (!token.is_empty()).then_some(token)
-        })
+    crate::github::github_token()
 }
 
 /// Count one TUI session create for the opt-in telemetry trend counter. Bounded

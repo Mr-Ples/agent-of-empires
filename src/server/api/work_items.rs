@@ -31,6 +31,26 @@ pub struct WorkItemsResponse {
     pub work_items: WorkItemListProjection,
 }
 
+pub async fn recover_github_auth() -> impl IntoResponse {
+    match tokio::task::spawn_blocking(crate::github::recover_interactive).await {
+        Ok(Ok(())) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "message": "GitHub authentication completed" })),
+        )
+            .into_response(),
+        Ok(Err(error)) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "ok": false, "message": error.to_string() })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "ok": false, "message": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 pub async fn list_work_items(
     State(state): State<Arc<AppState>>,
     Query(query): Query<WorkItemsQuery>,
@@ -186,13 +206,7 @@ fn github_issue_error(error: crate::github::IssueMutationError) -> axum::respons
 }
 
 fn github_client() -> Result<crate::github::GitHubClient, String> {
-    let token = ["GITHUB_TOKEN", "GH_TOKEN"]
-        .into_iter()
-        .find_map(|name| {
-            std::env::var(name)
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
+    let token = crate::github::github_token()
         .ok_or_else(|| "GitHub authentication is required".to_string())?;
     crate::github::GitHubClient::authenticated(
         crate::github::GitHubClientConfig {

@@ -1765,6 +1765,40 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_repo_config_label_prompt_rules_override_global_by_id() {
+        let mut config = Config::default();
+        config.work_items.label_prompt_rules.insert(
+            "review".to_string(),
+            crate::github::LabelPromptRule {
+                labels: vec!["ready-for-agent".to_string()],
+                instruction: "Review carefully".to_string(),
+            },
+        );
+        let repo: RepoConfig = serde_json::from_value(serde_json::json!({"work_items": {
+            "label_prompt_rules": {
+                "review": {
+                    "labels": ["needs-review"],
+                    "instruction": "Request review first"
+                },
+                "testing": {
+                    "labels": ["bug"],
+                    "instruction": "Add a regression test"
+                }
+            }
+        }}))
+        .unwrap();
+
+        let merged = merge_repo_config(config, &repo);
+
+        assert_eq!(merged.work_items.label_prompt_rules.len(), 2);
+        assert_eq!(
+            merged.work_items.label_prompt_rules["review"].instruction,
+            "Request review first"
+        );
+        assert!(merged.work_items.label_prompt_rules.contains_key("testing"));
+    }
+
+    #[test]
     fn test_merge_repo_config_no_overrides() {
         let config = Config::default();
         let repo = RepoConfig::default();

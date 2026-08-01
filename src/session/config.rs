@@ -143,6 +143,11 @@ pub struct WorkItemsConfig {
     /// Built-in prompt detector ids to disable. Keys are id or agent:id.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub disabled_built_in_prompt_patterns: BTreeMap<String, bool>,
+
+    /// AoE-owned startup instructions keyed by stable rule id. Profile and
+    /// repository overrides merge by rule id.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub label_prompt_rules: BTreeMap<String, crate::github::LabelPromptRule>,
 }
 
 fn default_liveness_idle_after_secs() -> u64 {
@@ -155,6 +160,7 @@ impl Default for WorkItemsConfig {
             liveness_idle_after_secs: default_liveness_idle_after_secs(),
             prompt_patterns: BTreeMap::new(),
             disabled_built_in_prompt_patterns: BTreeMap::new(),
+            label_prompt_rules: BTreeMap::new(),
         }
     }
 }

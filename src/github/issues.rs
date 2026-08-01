@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
@@ -9,6 +10,17 @@ use std::str::FromStr;
 use thiserror::Error;
 
 pub const DEFAULT_TRIAGE_LABEL: &str = "needs-triage";
+
+/// AoE-owned instructions added to issue-created session context when a label
+/// on the issue matches one of the rule's labels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelPromptRule {
+    /// Labels are compared case-insensitively.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Startup instructions for the agent.
+    pub instruction: String,
+}
 
 /// The order in which issue work items are presented. GitHub ordering is the
 /// server's order and remains the default for backwards compatibility.
@@ -625,6 +637,18 @@ pub fn issue_session_default_branch(issue_ref: &IssueRef) -> String {
 }
 
 pub fn issue_context_prompt(issue_ref: &IssueRef, issue: Option<&IssueRecord>) -> String {
+    issue_context_prompt_with_rules(issue_ref, issue, &BTreeMap::new())
+}
+
+/// Build issue context and append all matching label-rule instructions.
+///
+/// The rules are expected in a `BTreeMap`, so their ids define deterministic
+/// output order. Empty instructions and labels never produce prompt content.
+pub fn issue_context_prompt_with_rules(
+    issue_ref: &IssueRef,
+    issue: Option<&IssueRecord>,
+    rules: &BTreeMap<String, LabelPromptRule>,
+) -> String {
     let mut lines = vec![
         "Issue Context".to_string(),
         String::new(),
@@ -655,6 +679,35 @@ pub fn issue_context_prompt(issue_ref: &IssueRef, issue: Option<&IssueRecord>) -
         }
     } else {
         lines.push("Title: unavailable in local issue cache".to_string());
+    }
+
+    if let Some(issue) = issue {
+        let issue_labels = issue
+            .labels
+            .iter()
+            .map(|label| label.name.trim().to_ascii_lowercase())
+            .collect::<HashSet<_>>();
+        let instructions = rules
+            .values()
+            .filter_map(|rule| {
+                let instruction = rule.instruction.trim();
+                let matches = rule
+                    .labels
+                    .iter()
+                    .map(|label| label.trim().to_ascii_lowercase())
+                    .any(|label| !label.is_empty() && issue_labels.contains(&label));
+                matches.then_some(instruction)
+            })
+            .filter(|instruction| !instruction.is_empty())
+            .collect::<Vec<_>>();
+        if !instructions.is_empty() {
+            lines.push(String::new());
+            lines.push("Label Prompt Rules:".to_string());
+            for instruction in instructions {
+                lines.push(String::new());
+                lines.push(instruction.to_string());
+            }
+        }
     }
 
     lines.join("\n")
@@ -1385,6 +1438,63 @@ mod tests {
         assert!(prompt.contains("Title: Support issue-first session creation"));
         assert!(prompt.contains("Labels: ready-for-agent"));
         assert!(prompt.contains("Acceptance criteria here."));
+    }
+
+    #[test]
+    fn issue_context_prompt_matches_rules_case_insensitively_in_id_order() {
+        let record = GitHubIssuePayload {
+            number: 17,
+            title: "Issue".to_string(),
+            labels: vec![
+                GitHubIssueLabelPayload {
+                    name: "Ready-For-Agent".to_string(),
+                    color: None,
+                    description: None,
+                },
+                GitHubIssueLabelPayload {
+                    name: "bug".to_string(),
+                    color: None,
+                    description: None,
+                },
+            ],
+            ..issue_payload()
+        }
+        .normalize(
+            "owner",
+            "repo",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+        let rules = BTreeMap::from([
+            (
+                "z-last".to_string(),
+                LabelPromptRule {
+                    labels: vec!["bug".to_string()],
+                    instruction: "Second instruction".to_string(),
+                },
+            ),
+            (
+                "a-first".to_string(),
+                LabelPromptRule {
+                    labels: vec!["ready-for-agent".to_string()],
+                    instruction: "First instruction".to_string(),
+                },
+            ),
+            (
+                "ignored".to_string(),
+                LabelPromptRule {
+                    labels: vec!["documentation".to_string()],
+                    instruction: "Must not appear".to_string(),
+                },
+            ),
+        ]);
+
+        let prompt = issue_context_prompt_with_rules(&record.issue_ref, Some(&record), &rules);
+
+        assert!(prompt.contains("First instruction"));
+        assert!(prompt.contains("Second instruction"));
+        assert!(prompt.find("First instruction") < prompt.find("Second instruction"));
+        assert!(!prompt.contains("Must not appear"));
     }
 
     #[test]

@@ -45,6 +45,16 @@ export function fetchWorkItems(owner: string, repo: string): Promise<WorkItemsRe
   return fetchJson<WorkItemsResponse>(`/api/work-items?${params.toString()}`);
 }
 
+export async function recoverGitHubAuth(): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const res = await fetch("/api/github/auth/recover", { method: "POST" });
+    const data = (await res.json().catch(() => ({}))) as { message?: string };
+    return { ok: res.ok, message: data.message };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Network error" };
+  }
+}
+
 export async function createGitHubIssue(input: {
   owner: string;
   repo: string;

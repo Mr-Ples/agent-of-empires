@@ -1601,6 +1601,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         // literal "search" never resolves as a session id. See #2515.
         .route("/api/sessions/search", get(api::search_sessions))
         .route("/api/work-items", get(api::list_work_items))
+        .route("/api/github/auth/recover", post(api::recover_github_auth))
         .route("/api/github/issues", post(api::create_issue))
         .route(
             "/api/github/issues/{owner}/{repo}/{number}",

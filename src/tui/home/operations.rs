@@ -28,9 +28,14 @@ pub(crate) fn issue_context_prompt_for_new_session(
         let cached_issue_record = crate::session::get_app_dir()
             .ok()
             .and_then(|app_dir| crate::github::load_cached_issue_record(app_dir, issue_ref));
-        Some(crate::github::issue_context_prompt(
+        let config = crate::session::repo_config::resolve_config_with_repo_or_warn(
+            &data.profile,
+            std::path::Path::new(&data.path),
+        );
+        Some(crate::github::issue_context_prompt_with_rules(
             issue_ref,
             cached_issue_record.as_ref(),
+            &config.work_items.label_prompt_rules,
         ))
     }
 }
@@ -100,6 +105,35 @@ fn worktree_rename_block(
 }
 
 impl HomeView {
+    pub(super) fn recover_github_auth(&mut self) {
+        let Some(project_path) = self
+            .active_issue_project()
+            .map(|project| project.path.clone())
+        else {
+            return;
+        };
+        let repository = match self.project_issue_states.get(&project_path) {
+            Some(super::ProjectIssueReadState::Ready { repository, .. })
+            | Some(super::ProjectIssueReadState::MissingCache { repository }) => repository.clone(),
+            _ => return,
+        };
+        match crate::github::recover_interactive() {
+            Ok(()) => {
+                self.info_dialog = Some(InfoDialog::sized_to_fit(
+                    "GitHub authentication complete",
+                    "Refreshing GitHub issues now.",
+                ));
+                self.start_issue_sync(project_path, repository);
+            }
+            Err(error) => {
+                self.info_dialog = Some(InfoDialog::sized_to_fit(
+                    "GitHub authentication failed",
+                    &error.to_string(),
+                ));
+            }
+        }
+    }
+
     /// Prepare the issue view from the repo the user is currently working in.
     /// Issue mode is intentionally the point where a normal project is
     /// registered, so opening it never requires a separate setup detour.

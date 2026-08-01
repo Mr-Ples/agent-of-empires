@@ -5035,7 +5035,7 @@ impl HomeView {
                         .unwrap_or("using cached issues from the last successful sync")
                 )),
                 crate::github::IssueSyncStatus::AuthRequired => Some(format!(
-                    "Setup: GitHub auth required for {}/{}",
+                    "Setup: GitHub auth required for {}/{} (press a to authenticate)",
                     repository.owner, repository.repo
                 )),
                 crate::github::IssueSyncStatus::Forbidden => Some(format!(

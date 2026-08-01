@@ -81,7 +81,9 @@ pub use telemetry::{
     get_telemetry_status, post_telemetry_seen, post_telemetry_structured_interaction,
     set_telemetry_consent,
 };
-pub use work_items::{create_issue, edit_issue, list_work_items, set_issue_state};
+pub use work_items::{
+    create_issue, edit_issue, list_work_items, recover_github_auth, set_issue_state,
+};
 
 /// Canonical 404 for a session id that does not resolve to a live instance.
 /// Body shape (`error` discriminator + human `message`) matches the rest of

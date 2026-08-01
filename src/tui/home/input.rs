@@ -2548,6 +2548,22 @@ impl HomeView {
         // shared bindings registry (resolve picks the right chord per mode and
         // a typing-guard catches unbound bare lowercase), so no key rewriting
         // happens here.
+        if self.group_by == GroupByMode::Issues
+            && matches!(key.code, KeyCode::Char('a') | KeyCode::Char('A'))
+            && self
+                .active_issue_project()
+                .and_then(|project| self.project_issue_states.get(&project.path))
+                .is_some_and(|state| {
+                    matches!(
+                        state,
+                        super::ProjectIssueReadState::Ready { sync, .. }
+                            if sync.status == crate::github::IssueSyncStatus::AuthRequired
+                    )
+                })
+        {
+            self.recover_github_auth();
+            return None;
+        }
         self.dispatch_action_key(key, update_info)
     }
 
