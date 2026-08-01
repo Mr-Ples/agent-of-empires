@@ -27,6 +27,23 @@ export function ProjectFormModal({ initial, onClose, onSaved }: Props) {
   const [path, setPath] = useState(initial?.path ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [baseBranch, setBaseBranch] = useState(initial?.default_base_branch ?? "");
+  const [issueSortOrder, setIssueSortOrder] = useState<"github" | "label_priority">(
+    initial?.issue_sort_order ?? "github",
+  );
+  const [issueLabelPriority, setIssueLabelPriority] = useState(
+    (
+      initial?.issue_label_priority ?? [
+        "p0",
+        "p1",
+        "p2",
+        "needs-triage",
+        "ready-for-human",
+        "needs-info",
+        "ready-for-agent",
+        "wontfix",
+      ]
+    ).join(", "),
+  );
   const [scope, setScope] = useState<"global" | "profile">(initial?.scope ?? "global");
   const [allowOverride, setAllowOverride] = useState(false);
   const [showBrowser, setShowBrowser] = useState(false);
@@ -42,7 +59,16 @@ export function ProjectFormModal({ initial, onClose, onSaved }: Props) {
     if (isEdit) {
       setSubmitting(true);
       setError(null);
-      const result = await updateProject(initial.name, initial.scope, baseBranch.trim() || null);
+      const result = await updateProject(
+        initial.name,
+        initial.scope,
+        baseBranch.trim() || null,
+        issueSortOrder,
+        issueLabelPriority
+          .split(",")
+          .map((label) => label.trim())
+          .filter(Boolean),
+      );
       if (!result.ok) {
         setSubmitting(false);
         setError(result.error || "Update failed");
@@ -131,6 +157,29 @@ export function ProjectFormModal({ initial, onClose, onSaved }: Props) {
               </div>
             )}
           </>
+        )}
+
+        {isEdit && (
+          <div className="mt-3 border-t border-surface-700/40 pt-3">
+            <label className="block text-[12px] text-text-dim mb-1">Issue sort</label>
+            <select
+              value={issueSortOrder}
+              onChange={(e) => setIssueSortOrder(e.target.value as "github" | "label_priority")}
+              className="w-full rounded-md border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-text-primary mb-3"
+            >
+              <option value="github">GitHub order</option>
+              <option value="label_priority">Label priority</option>
+            </select>
+            <label className="block text-[12px] text-text-dim mb-1">Label priority</label>
+            <input
+              value={issueLabelPriority}
+              onChange={(e) => setIssueLabelPriority(e.target.value)}
+              className="w-full rounded-md border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-text-primary"
+            />
+            <p className="mt-1 text-[11px] text-text-dim">
+              Comma-separated labels, first match wins. Unmatched issues stay last.
+            </p>
+          </div>
         )}
 
         <label className="block text-[12px] text-text-dim mb-1">Name{isEdit ? "" : " (optional)"}</label>

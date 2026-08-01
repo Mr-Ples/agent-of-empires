@@ -10,6 +10,27 @@ use thiserror::Error;
 
 pub const DEFAULT_TRIAGE_LABEL: &str = "needs-triage";
 
+/// The order in which issue work items are presented. GitHub ordering is the
+/// server's order and remains the default for backwards compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum IssueSortOrder {
+    #[default]
+    Github,
+    LabelPriority,
+}
+
+pub const DEFAULT_LABEL_PRIORITY: &[&str] = &[
+    "p0",
+    "p1",
+    "p2",
+    "needs-triage",
+    "ready-for-human",
+    "needs-info",
+    "ready-for-agent",
+    "wontfix",
+];
+
 /// Stable issue identity, formatted as `owner/repo#number`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -349,6 +370,66 @@ pub struct WorkItemProjection {
 pub struct WorkItemListProjection {
     pub open: Vec<WorkItemProjection>,
     pub closed: Vec<WorkItemProjection>,
+}
+
+/// Sort issues with the shared semantics used by the TUI and web surfaces.
+/// GitHub ordering is intentionally a no-op. Label priority uses the first
+/// matching label, with unmatched issues after every matched issue.
+pub fn sort_work_items(items: &mut [WorkItemProjection], order: IssueSortOrder, labels: &[String]) {
+    if order != IssueSortOrder::LabelPriority {
+        return;
+    }
+    items.sort_by(|a, b| {
+        work_item_priority(a, order, labels)
+            .cmp(&work_item_priority(b, order, labels))
+            .then_with(|| a.issue_ref.cmp(&b.issue_ref))
+    });
+}
+
+pub fn work_item_priority(
+    item: &WorkItemProjection,
+    order: IssueSortOrder,
+    labels: &[String],
+) -> usize {
+    match order {
+        IssueSortOrder::Github => 0,
+        IssueSortOrder::LabelPriority => label_priority(&item.labels, labels),
+    }
+}
+
+fn label_priority(issue_labels: &[IssueLabel], priorities: &[String]) -> usize {
+    priorities
+        .iter()
+        .position(|priority| {
+            issue_labels
+                .iter()
+                .any(|label| label.name.eq_ignore_ascii_case(priority))
+        })
+        .unwrap_or(priorities.len())
+}
+
+/// Shared case-insensitive issue search over the fields users see in either
+/// surface. Empty queries match every item.
+pub fn work_item_matches(item: &WorkItemProjection, query: &str) -> bool {
+    let query = query.trim().to_ascii_lowercase();
+    query.is_empty()
+        || item.title.to_ascii_lowercase().contains(&query)
+        || item
+            .issue_ref
+            .to_string()
+            .to_ascii_lowercase()
+            .contains(&query)
+        || item
+            .labels
+            .iter()
+            .any(|label| label.name.to_ascii_lowercase().contains(&query))
+        || item
+            .issue
+            .excerpt
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .contains(&query)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -854,6 +935,85 @@ mod tests {
         assert_eq!(validated.body.as_deref(), Some("Body"));
         assert_eq!(validated.labels, vec!["needs-triage", "ready-for-agent"]);
         assert!(IssueCreateRequest::new(" ").validated().is_err());
+    }
+
+    #[test]
+    fn label_priority_sort_uses_first_match_and_puts_unmatched_last() {
+        let make = |number, labels: &[&str]| {
+            WorkItemProjection::from(IssueRecord {
+                issue_ref: IssueRef::new("owner", "repo", number).unwrap(),
+                github_id: number,
+                node_id: number.to_string(),
+                title: number.to_string(),
+                body: None,
+                excerpt: None,
+                state: IssueState::Open,
+                labels: labels
+                    .iter()
+                    .map(|name| IssueLabel {
+                        name: (*name).to_string(),
+                        color: None,
+                        description: None,
+                    })
+                    .collect(),
+                assignees: Vec::new(),
+                url: String::new(),
+                created_at: ts("2026-07-01T12:00:00Z"),
+                updated_at: ts("2026-07-02T12:00:00Z"),
+                closed_at: None,
+                pull_request: None,
+                sync: IssueSyncMetadata::fresh(ts("2026-07-02T12:00:00Z")),
+            })
+        };
+        let mut items = vec![
+            make(3, &["p2"]),
+            make(1, &["p1", "p0"]),
+            make(2, &["other"]),
+        ];
+        sort_work_items(
+            &mut items,
+            IssueSortOrder::LabelPriority,
+            &["p0".into(), "p1".into(), "p2".into()],
+        );
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.issue_ref.number())
+                .collect::<Vec<_>>(),
+            vec![1, 3, 2]
+        );
+    }
+
+    #[test]
+    fn github_sort_preserves_input_order() {
+        let mut items = vec![
+            "owner/repo#2".parse().unwrap(),
+            "owner/repo#1".parse().unwrap(),
+        ];
+        let mut projections = items
+            .drain(..)
+            .map(|issue_ref| {
+                WorkItemProjection::from(IssueRecord {
+                    issue_ref,
+                    github_id: 1,
+                    node_id: String::new(),
+                    title: String::new(),
+                    body: None,
+                    excerpt: None,
+                    state: IssueState::Open,
+                    labels: Vec::new(),
+                    assignees: Vec::new(),
+                    url: String::new(),
+                    created_at: ts("2026-07-01T12:00:00Z"),
+                    updated_at: ts("2026-07-02T12:00:00Z"),
+                    closed_at: None,
+                    pull_request: None,
+                    sync: IssueSyncMetadata::fresh(ts("2026-07-02T12:00:00Z")),
+                })
+            })
+            .collect::<Vec<_>>();
+        sort_work_items(&mut projections, IssueSortOrder::Github, &[]);
+        assert_eq!(projections[0].issue_ref.number(), 2);
     }
 
     #[test]

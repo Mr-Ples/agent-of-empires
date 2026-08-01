@@ -6582,8 +6582,17 @@ impl HomeView {
             Item::WorkItem {
                 project_path, item, ..
             } => Some(format!(
-                "{} {} {} {}",
-                item.issue_ref, item.title, item.url, project_path
+                "{} {} {} {} {} {}",
+                item.issue_ref,
+                item.title,
+                item.url,
+                project_path,
+                item.issue.excerpt.as_deref().unwrap_or(""),
+                item.labels
+                    .iter()
+                    .map(|label| label.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
             )),
         }
     }

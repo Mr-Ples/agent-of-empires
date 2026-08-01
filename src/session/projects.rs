@@ -72,6 +72,15 @@ pub struct Project {
     /// then the repo's detected default branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_base_branch: Option<String>,
+    /// Issue ordering for this project. GitHub order is the default.
+    #[serde(default)]
+    pub issue_sort_order: crate::github::IssueSortOrder,
+    /// Ordered, case-insensitive label names used by label-priority sorting.
+    #[serde(
+        default = "default_issue_label_priority",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub issue_label_priority: Vec<String>,
     /// Whether this project shows as an empty (sessionless) header in the
     /// sidebar / project view. A registry entry is the "saved project" (it
     /// feeds the Projects view and the new-session wizard); the pin is the
@@ -105,6 +114,8 @@ impl Project {
             name: name.into(),
             path: path.into(),
             default_base_branch: None,
+            issue_sort_order: Default::default(),
+            issue_label_priority: default_issue_label_priority(),
             pinned: false,
             scope,
         }
@@ -137,6 +148,13 @@ impl Project {
         let canonical = path.canonicalize().unwrap_or(path);
         crate::git::GitWorktree::is_git_repo(&canonical)
     }
+}
+
+fn default_issue_label_priority() -> Vec<String> {
+    crate::github::DEFAULT_LABEL_PRIORITY
+        .iter()
+        .map(|label| (*label).to_string())
+        .collect()
 }
 
 fn global_path() -> Result<PathBuf> {
@@ -485,6 +503,47 @@ pub fn set_pinned(
 
     existing[idx].pinned = pinned;
     let updated = existing[idx].clone();
+    save_scope(profile, scope, &existing).map_err(RegistryError::Other)?;
+    Ok(updated)
+}
+
+/// Persist the issue sorting preferences for a project in one read-modify-write.
+pub fn update_issue_preferences(
+    profile: &str,
+    scope: ProjectScope,
+    name_or_path: &str,
+    sort_order: Option<crate::github::IssueSortOrder>,
+    label_priority: Option<Vec<String>>,
+) -> std::result::Result<Project, RegistryError> {
+    let mut existing = match scope {
+        ProjectScope::Global => load_global().map_err(RegistryError::Other)?,
+        ProjectScope::Profile => load_profile(profile).map_err(RegistryError::Other)?,
+    };
+    let target = canonical_key(name_or_path);
+    let project = existing
+        .iter_mut()
+        .find(|project| {
+            project.name.eq_ignore_ascii_case(name_or_path)
+                || canonical_key(&project.path) == target
+        })
+        .ok_or_else(|| {
+            RegistryError::NotFound(format!(
+                "No project '{}' in {} scope",
+                name_or_path,
+                scope.as_str()
+            ))
+        })?;
+    if let Some(sort_order) = sort_order {
+        project.issue_sort_order = sort_order;
+    }
+    if let Some(labels) = label_priority {
+        project.issue_label_priority = labels
+            .into_iter()
+            .map(|label| label.trim().to_ascii_lowercase())
+            .filter(|label| !label.is_empty())
+            .collect();
+    }
+    let updated = project.clone();
     save_scope(profile, scope, &existing).map_err(RegistryError::Other)?;
     Ok(updated)
 }

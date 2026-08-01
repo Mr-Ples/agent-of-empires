@@ -1740,12 +1740,18 @@ export async function updateProject(
   name: string,
   scope: "global" | "profile",
   defaultBaseBranch: string | null,
+  issueSortOrder?: "github" | "label_priority",
+  issueLabelPriority?: string[],
 ): Promise<{ ok: boolean; error?: string; project?: ProjectInfo }> {
   try {
     const res = await fetch(`/api/projects/${encodeURIComponent(name)}?scope=${scope}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ default_base_branch: defaultBaseBranch }),
+      body: JSON.stringify({
+        default_base_branch: defaultBaseBranch,
+        ...(issueSortOrder ? { issue_sort_order: issueSortOrder } : {}),
+        ...(issueLabelPriority ? { issue_label_priority: issueLabelPriority } : {}),
+      }),
     });
     if (!res.ok) {
       const text = await res.text();

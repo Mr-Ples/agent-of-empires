@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GitPullRequest, RefreshCw } from "lucide-react";
+import { GitPullRequest, RefreshCw, Search } from "lucide-react";
 import { fetchWorkItems } from "../lib/api";
 import type { AttentionState, IssueSyncMetadata, ProjectInfo, SessionResponse, WorkItemProjection } from "../lib/types";
 import { issueLabelStyle } from "../lib/issueLabelColor";
@@ -36,6 +36,7 @@ export function WorkItemsSidebar({
   } | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [closedExpanded, setClosedExpanded] = useState(false);
+  const [query, setQuery] = useState("");
   const requestVersion = useRef(0);
   const selectedProject =
     githubProjects.find((p) => p.path === projectPath) ??
@@ -97,8 +98,42 @@ export function WorkItemsSidebar({
   }
 
   const selectedSlug = selectedProject?.github_repository ?? "";
-  const items = snapshot?.slug === selectedSlug ? snapshot.open : [];
-  const closed = snapshot?.slug === selectedSlug ? snapshot.closed : [];
+  const rawItems = snapshot?.slug === selectedSlug ? snapshot.open : [];
+  const rawClosed = snapshot?.slug === selectedSlug ? snapshot.closed : [];
+  const priority = selectedProject?.issue_label_priority ?? [
+    "p0",
+    "p1",
+    "p2",
+    "needs-triage",
+    "ready-for-human",
+    "needs-info",
+    "ready-for-agent",
+    "wontfix",
+  ];
+  const rank = (item: WorkItemProjection) => {
+    if (selectedProject?.issue_sort_order !== "label_priority") return 0;
+    const index = priority.findIndex((name) =>
+      item.labels.some((label) => name.toLowerCase() === label.name.toLowerCase()),
+    );
+    return index < 0 ? priority.length : index;
+  };
+  const matches = (item: WorkItemProjection) => {
+    const q = query.trim().toLowerCase();
+    return (
+      !q ||
+      [item.title, item.issue_ref, item.issue.excerpt ?? "", ...item.labels.map((label) => label.name)].some((value) =>
+        value.toLowerCase().includes(q),
+      )
+    );
+  };
+  const order = (list: WorkItemProjection[]) => {
+    const filtered = [...list].filter(matches);
+    return selectedProject?.issue_sort_order === "label_priority"
+      ? filtered.sort((a, b) => rank(a) - rank(b) || a.issue_ref.localeCompare(b.issue_ref))
+      : filtered;
+  };
+  const items = order(rawItems);
+  const closed = order(rawClosed);
   const sync = snapshot?.slug === selectedSlug ? snapshot.sync : null;
   const isLoading = !!selectedSlug && snapshot?.slug !== selectedSlug && !loadError;
 
@@ -121,6 +156,16 @@ export function WorkItemsSidebar({
           </select>
         </div>
       )}
+      <div className="relative px-3 pb-2">
+        <Search className="pointer-events-none absolute left-5 top-2 h-3.5 w-3.5 text-text-dim" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search issues..."
+          aria-label="Search issues"
+          className="w-full rounded-md border border-surface-700 bg-surface-900 py-1.5 pl-7 pr-2 text-xs text-text-primary placeholder:text-text-dim"
+        />
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden border-t border-surface-700/60">
         {isLoading ? (
           <div className="px-4 py-8 text-center text-sm text-text-dim">Loading issues...</div>

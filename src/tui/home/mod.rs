@@ -4908,15 +4908,32 @@ impl HomeView {
             .filter(|work_item| work_item.item.state == crate::github::WorkItemState::Open)
             .cloned()
             .collect();
-        let mut closed: Vec<_> = self
+        let closed: Vec<_> = self
             .project_work_items
             .iter()
             .filter(|work_item| work_item.project_path == project.path)
             .filter(|work_item| work_item.item.state == crate::github::WorkItemState::Closed)
             .cloned()
             .collect();
-        open.sort_by(|a, b| a.item.issue_ref.cmp(&b.item.issue_ref));
-        closed.sort_by(|a, b| a.item.issue_ref.cmp(&b.item.issue_ref));
+        let preferences = self
+            .registered_projects
+            .iter()
+            .find(|registered| registered.path == project.path)
+            .map(|registered| {
+                (
+                    registered.issue_sort_order,
+                    registered.issue_label_priority.clone(),
+                )
+            });
+        if let Some((order, labels)) = preferences.as_ref() {
+            if *order == crate::github::IssueSortOrder::LabelPriority {
+                open.sort_by(|a, b| {
+                    crate::github::work_item_priority(&a.item, *order, labels)
+                        .cmp(&crate::github::work_item_priority(&b.item, *order, labels))
+                        .then_with(|| a.item.issue_ref.cmp(&b.item.issue_ref))
+                });
+            }
+        }
 
         let mut items = vec![Item::Group {
             path: format!("__issues_project:{}", project.path),

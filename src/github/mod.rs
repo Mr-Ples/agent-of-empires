@@ -19,12 +19,13 @@ pub use error::{GitHubError, Result};
 pub use issues::{
     issue_context_prompt, issue_session_default_branch, issue_session_default_title,
     load_cached_issue_record, project_work_items, project_work_items_with_attention,
-    AttentionInputs, AttentionState, AttentionVisualTone, GitHubIssuePayload,
-    IssueAttachmentConflict, IssueCreateRequest, IssueEditRequest, IssueLabel,
-    IssueMutationValidationError, IssueNormalizeError, IssueRecord, IssueRef, IssueRefParseError,
-    IssueState, IssueSyncFailureKind, IssueSyncMetadata, IssueSyncStatus, PullRequestBadge,
-    RuntimeLiveness, ValidatedIssueCreateRequest, ValidatedIssueEditRequest,
-    WorkItemListProjection, WorkItemProjection, WorkItemSessionAttachment, WorkItemState,
+    sort_work_items, work_item_matches, work_item_priority, AttentionInputs, AttentionState,
+    AttentionVisualTone, GitHubIssuePayload, IssueAttachmentConflict, IssueCreateRequest,
+    IssueEditRequest, IssueLabel, IssueMutationValidationError, IssueNormalizeError, IssueRecord,
+    IssueRef, IssueRefParseError, IssueSortOrder, IssueState, IssueSyncFailureKind,
+    IssueSyncMetadata, IssueSyncStatus, PullRequestBadge, RuntimeLiveness,
+    ValidatedIssueCreateRequest, ValidatedIssueEditRequest, WorkItemListProjection,
+    WorkItemProjection, WorkItemSessionAttachment, WorkItemState, DEFAULT_LABEL_PRIORITY,
     DEFAULT_TRIAGE_LABEL,
 };
 pub use sync::{

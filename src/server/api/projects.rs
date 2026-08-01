@@ -28,6 +28,8 @@ pub struct ProjectResponse {
     /// Whether the project shows as a sessionless sidebar header. The web
     /// derives the pin marker and empty-header visibility from this. See #2208.
     pub pinned: bool,
+    pub issue_sort_order: crate::github::IssueSortOrder,
+    pub issue_label_priority: Vec<String>,
 }
 
 impl From<Project> for ProjectResponse {
@@ -39,6 +41,8 @@ impl From<Project> for ProjectResponse {
             scope: p.scope.as_str().to_string(),
             default_base_branch: p.default_base_branch,
             pinned: p.pinned,
+            issue_sort_order: p.issue_sort_order,
+            issue_label_priority: p.issue_label_priority,
         }
     }
 }
@@ -311,6 +315,8 @@ struct ProjectPatch {
     base_branch: Option<Option<String>>,
     /// `None`: key absent. `Some(b)`: set the pin flag to `b`.
     pinned: Option<bool>,
+    issue_sort_order: Option<crate::github::IssueSortOrder>,
+    issue_label_priority: Option<Vec<String>>,
 }
 
 fn parse_project_patch(
@@ -327,15 +333,39 @@ fn parse_project_patch(
         Some(serde_json::Value::Bool(b)) => Some(*b),
         Some(_) => return Err(("bad_field", "pinned must be a boolean")),
     };
-    if base_branch.is_none() && pinned.is_none() {
-        return Err((
-            "no_fields",
-            "provide at least one of: default_base_branch, pinned",
-        ));
+    let issue_sort_order = body
+        .get("issue_sort_order")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|_| {
+            (
+                "bad_field",
+                "issue_sort_order must be github or label_priority",
+            )
+        })?;
+    let issue_label_priority = body
+        .get("issue_label_priority")
+        .map(|value| {
+            serde_json::from_value::<Vec<String>>(value.clone()).map_err(|_| {
+                (
+                    "bad_field",
+                    "issue_label_priority must be an array of strings",
+                )
+            })
+        })
+        .transpose()?;
+    if base_branch.is_none()
+        && pinned.is_none()
+        && issue_sort_order.is_none()
+        && issue_label_priority.is_none()
+    {
+        return Err(("no_fields", "provide at least one project field to update"));
     }
     Ok(ProjectPatch {
         base_branch,
         pinned,
+        issue_sort_order,
+        issue_label_priority,
     })
 }
 
@@ -409,6 +439,17 @@ pub async fn update_project(
             result = Some(projects::set_pinned(&state.profile, scope, &name, pinned));
         }
     }
+    if (!matches!(&result, Some(Err(_))))
+        && (patch.issue_sort_order.is_some() || patch.issue_label_priority.is_some())
+    {
+        result = Some(projects::update_issue_preferences(
+            &state.profile,
+            scope,
+            &name,
+            patch.issue_sort_order,
+            patch.issue_label_priority,
+        ));
+    }
 
     match result.expect("parse_project_patch guarantees at least one field") {
         Ok(updated) => {
@@ -455,10 +496,7 @@ mod tests {
         // here as "no_fields").
         assert_eq!(
             parse_project_patch(&json!({})),
-            Err((
-                "no_fields",
-                "provide at least one of: default_base_branch, pinned"
-            ))
+            Err(("no_fields", "provide at least one project field to update"))
         );
     }
 
@@ -469,14 +507,18 @@ mod tests {
             parse_project_patch(&json!({"default_base_branch": null})),
             Ok(ProjectPatch {
                 base_branch: Some(None),
-                pinned: None
+                pinned: None,
+                issue_sort_order: None,
+                issue_label_priority: None,
             })
         );
         assert_eq!(
             parse_project_patch(&json!({"default_base_branch": "develop"})),
             Ok(ProjectPatch {
                 base_branch: Some(Some("develop".to_string())),
-                pinned: None
+                pinned: None,
+                issue_sort_order: None,
+                issue_label_priority: None,
             })
         );
         assert_eq!(
@@ -492,7 +534,9 @@ mod tests {
             parse_project_patch(&json!({"pinned": false})),
             Ok(ProjectPatch {
                 base_branch: None,
-                pinned: Some(false)
+                pinned: Some(false),
+                issue_sort_order: None,
+                issue_label_priority: None,
             })
         );
         assert_eq!(

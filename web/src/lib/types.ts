@@ -563,6 +563,8 @@ export interface ProjectInfo {
    *  registry entry is the saved project; the pin is the separate decision to
    *  keep its header visible without sessions. See #2208. */
   pinned: boolean;
+  issue_sort_order?: "github" | "label_priority";
+  issue_label_priority?: string[];
 }
 
 /** Docker status returned by /api/docker/status */
