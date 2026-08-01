@@ -9792,6 +9792,159 @@ fn n_on_work_item_prefills_issue_session_defaults() {
     );
 }
 
+#[test]
+#[serial]
+fn n_on_attached_work_item_does_not_open_duplicate_session_dialog() {
+    use crate::session::config::GroupByMode;
+
+    let mut env = create_test_env_empty();
+    env.view.group_by = GroupByMode::Issues;
+    let mut item = github_work_item(
+        "mr-ples/agent-of-empires#17",
+        "Support issue-first sessions",
+    );
+    item.attached_session_id = Some("existing-session".to_string());
+    env.view.flat_items = vec![Item::WorkItem {
+        project_path: "/repos/alpha".to_string(),
+        item: Box::new(item),
+        depth: 1,
+    }];
+    env.view.cursor = 0;
+    env.view.update_selected();
+
+    env.view.handle_key(key(KeyCode::Char('n')), None);
+
+    assert!(env.view.new_dialog.is_none());
+    assert!(env.view.info_dialog.is_none());
+}
+
+#[test]
+#[serial]
+fn n_on_issues_mode_group_does_not_open_generic_session_dialog() {
+    use crate::session::config::GroupByMode;
+
+    let mut env = create_test_env_empty();
+    env.view.group_by = GroupByMode::Issues;
+    env.view.flat_items = vec![Item::Group {
+        path: "__issues_project:/repos/alpha".to_string(),
+        name: "Issues: alpha".to_string(),
+        depth: 0,
+        collapsed: false,
+        session_count: 1,
+        profile: None,
+        archived_at: None,
+    }];
+    env.view.cursor = 0;
+    env.view.update_selected();
+
+    env.view.handle_key(key(KeyCode::Char('n')), None);
+
+    assert!(env.view.new_dialog.is_none());
+    assert!(env.view.info_dialog.is_none());
+}
+
+#[test]
+#[serial]
+fn shift_n_in_issues_mode_creates_issue_request_with_default_triage_label() {
+    use crate::session::{config::GroupByMode, Project, ProjectScope};
+
+    let mut env = create_test_env_empty();
+    env.view.group_by = GroupByMode::Issues;
+    env.view.registered_projects =
+        vec![Project::new("alpha", "/repos/alpha", ProjectScope::Global)];
+    env.view.project_issue_states.insert(
+        "/repos/alpha".to_string(),
+        super::ProjectIssueReadState::MissingCache {
+            repository: crate::github::IssueRepository::new("mr-ples", "agent-of-empires").unwrap(),
+        },
+    );
+    env.view.flat_items = env.view.build_flat_items();
+
+    env.view.handle_key(key(KeyCode::Char('N')), None);
+    for ch in "New issue".chars() {
+        env.view.handle_key(key(KeyCode::Char(ch)), None);
+    }
+    let action = env.view.handle_key(key(KeyCode::Enter), None);
+
+    match action {
+        Some(Action::CreateGitHubIssue {
+            repository,
+            request,
+        }) => {
+            assert_eq!(repository.owner, "mr-ples");
+            assert_eq!(repository.repo, "agent-of-empires");
+            assert_eq!(request.title, "New issue");
+            assert!(request.apply_default_triage_label);
+        }
+        other => panic!("expected CreateGitHubIssue action, got {other:?}"),
+    }
+}
+
+#[test]
+#[serial]
+fn w_in_issues_mode_jumps_by_attention_priority() {
+    use crate::github::AttentionState;
+    use crate::session::config::GroupByMode;
+
+    let mut env = create_test_env_empty();
+    env.view.group_by = GroupByMode::Issues;
+    let mut active = github_work_item("mr-ples/agent-of-empires#1", "Active");
+    active.attached_session_id = Some("active".to_string());
+    active.attention_state = Some(AttentionState::Active);
+    let mut idle = github_work_item("mr-ples/agent-of-empires#2", "Idle");
+    idle.attached_session_id = Some("idle".to_string());
+    idle.attention_state = Some(AttentionState::Idle);
+    let mut needs_input = github_work_item("mr-ples/agent-of-empires#3", "Needs input");
+    needs_input.attached_session_id = Some("needs-input".to_string());
+    needs_input.attention_state = Some(AttentionState::NeedsInput);
+    let mut error = github_work_item("mr-ples/agent-of-empires#4", "Error");
+    error.attached_session_id = Some("error".to_string());
+    error.attention_state = Some(AttentionState::Error);
+    let mut stopped = github_work_item("mr-ples/agent-of-empires#5", "Stopped");
+    stopped.attached_session_id = Some("stopped".to_string());
+    stopped.attention_state = Some(AttentionState::Stopped);
+    let mut unattached = github_work_item("mr-ples/agent-of-empires#6", "Unattached");
+    unattached.attention_state = Some(AttentionState::NeedsInput);
+
+    env.view.flat_items = vec![
+        Item::WorkItem {
+            project_path: "/repos/alpha".to_string(),
+            item: Box::new(active),
+            depth: 1,
+        },
+        Item::WorkItem {
+            project_path: "/repos/alpha".to_string(),
+            item: Box::new(idle),
+            depth: 1,
+        },
+        Item::WorkItem {
+            project_path: "/repos/alpha".to_string(),
+            item: Box::new(stopped),
+            depth: 1,
+        },
+        Item::WorkItem {
+            project_path: "/repos/alpha".to_string(),
+            item: Box::new(unattached),
+            depth: 1,
+        },
+        Item::WorkItem {
+            project_path: "/repos/alpha".to_string(),
+            item: Box::new(error),
+            depth: 1,
+        },
+        Item::WorkItem {
+            project_path: "/repos/alpha".to_string(),
+            item: Box::new(needs_input),
+            depth: 1,
+        },
+    ];
+    env.view.cursor = 0;
+
+    env.view.handle_key(key(KeyCode::Char('w')), None);
+
+    assert_eq!(env.view.cursor, 5);
+}
+
 #[cfg(feature = "serve")]
 #[test]
 #[serial]

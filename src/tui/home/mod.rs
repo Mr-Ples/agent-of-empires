@@ -514,6 +514,7 @@ pub struct HomeView {
     pub(super) show_help: bool,
     pub(super) help_scroll: u16,
     pub(super) new_dialog: Option<NewSessionDialog>,
+    pub(super) new_issue_dialog: Option<crate::tui::dialogs::NewIssueDialog>,
     pub(super) confirm_dialog: Option<ConfirmDialog>,
     pub(super) unified_delete_dialog: Option<UnifiedDeleteDialog>,
     pub(super) group_delete_options_dialog: Option<GroupDeleteOptionsDialog>,
@@ -2159,6 +2160,7 @@ impl HomeView {
             show_help: false,
             help_scroll: 0,
             new_dialog: None,
+            new_issue_dialog: None,
             confirm_dialog: None,
             unified_delete_dialog: None,
             group_delete_options_dialog: None,
@@ -4397,6 +4399,7 @@ impl HomeView {
         self.show_help
             || self.search_active
             || self.new_dialog.is_some()
+            || self.new_issue_dialog.is_some()
             || self.confirm_dialog.is_some()
             || self.unified_delete_dialog.is_some()
             || self.group_delete_options_dialog.is_some()
@@ -4462,6 +4465,7 @@ impl HomeView {
             || self.show_help
             || self.search_active
             || self.new_dialog.is_some()
+            || self.new_issue_dialog.is_some()
             || self.confirm_dialog.is_some()
             || self.unified_delete_dialog.is_some()
             || self.group_delete_options_dialog.is_some()
@@ -4505,9 +4509,9 @@ impl HomeView {
     /// the dialog's input empty.
     ///
     /// So: burst is safe when no dialog is open (home shortcuts at risk) or
-    /// when one of the four paste-routed dialogs is open (rename / send_message
-    /// / new / settings — each forwards to `handle_paste`). For every other
-    /// dialog (command palette, profile picker, projects, info, etc.) keys
+    /// when one of the paste-routed dialogs is open (rename, send_message,
+    /// new, new_issue, settings; each forwards to `handle_paste`). For every
+    /// other dialog (command palette, profile picker, projects, info, etc.) keys
     /// must dispatch individually so the dialog input receives them.
     pub fn wants_paste_burst(&self) -> bool {
         if !self.has_dialog() {
@@ -4522,6 +4526,7 @@ impl HomeView {
             || self.rename_dialog.is_some()
             || self.send_message_dialog.is_some()
             || self.new_dialog.is_some()
+            || self.new_issue_dialog.is_some()
             || self.settings_view.is_some()
     }
 
@@ -4954,6 +4959,16 @@ impl HomeView {
     }
 
     fn active_issue_project(&self) -> Option<&crate::session::Project> {
+        let current_dir = std::env::current_dir().ok()?;
+        let current_path = current_dir.to_string_lossy().to_string();
+
+        if let Some(project) = self.registered_projects.iter().find(|project| {
+            crate::session::projects::canonical_key(&project.path)
+                == crate::session::projects::canonical_key(&current_path)
+        }) {
+            return Some(project);
+        }
+
         if let Some(selected_id) = &self.selected_session {
             if let Some(inst) = self.get_instance(selected_id) {
                 if let Some(project) = self.registered_projects.iter().find(|project| {
@@ -6745,6 +6760,11 @@ impl HomeView {
         self.refresh_project_work_items();
     }
 
+    pub(in crate::tui) fn refresh_issue_work_items(&mut self) {
+        self.refresh_project_work_items();
+        self.rebuild_flat_items();
+    }
+
     fn refresh_project_work_items(&mut self) {
         use crate::github::{
             issue_sync_cache_dir, project_work_items_with_attention, AttentionInputs,
@@ -6824,7 +6844,7 @@ impl HomeView {
                 projection
                     .open
                     .into_iter()
-                    .chain(projection.closed.into_iter())
+                    .chain(projection.closed)
                     .map(|item| ProjectWorkItem {
                         project_label: crate::session::projects::repo_label(&project.path),
                         project_path: project.path.clone(),

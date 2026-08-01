@@ -17,10 +17,10 @@ use crate::tui::dialogs::ServeAction;
 use crate::tui::dialogs::{
     builtin_commands, CommandPaletteDialog, ConfirmDialog, ContextMenuAction, ContextMenuDialog,
     DeleteDialogConfig, DialogResult, GroupDeleteOptionsDialog, HooksInstallDialog, InfoDialog,
-    IntroOutcome, NewSessionData, NewSessionDialog, NoAgentsAction, PaletteAction, PaletteCommand,
-    PaletteGroup, ProfilePickerAction, ProjectsDialog, RenameDialog, RenameMode, RepoTrustAction,
-    RestartDialog, SendMessageDialog, TipsDialog, TipsOutcome, UnifiedDeleteDialog,
-    WorktreeNameDialog,
+    IntroOutcome, NewIssueDialog, NewSessionData, NewSessionDialog, NoAgentsAction, PaletteAction,
+    PaletteCommand, PaletteGroup, ProfilePickerAction, ProjectsDialog, RenameDialog, RenameMode,
+    RepoTrustAction, RestartDialog, SendMessageDialog, TipsDialog, TipsOutcome,
+    UnifiedDeleteDialog, WorktreeNameDialog,
 };
 use crate::tui::diff::{DiffAction, DiffView};
 use crate::tui::responsive;
@@ -1322,6 +1322,9 @@ impl HomeView {
             // open so the underlying list / preview don't react.
             return true;
         }
+        if self.new_issue_dialog.is_some() {
+            return true;
+        }
         // Confirm dialog floats over settings (e.g., the unsaved-changes
         // discard prompt), so it has to win over the settings-view
         // takeover for click routing the same way the keyboard path
@@ -1700,6 +1703,23 @@ impl HomeView {
         // get routed to the session behind it.
         if self.live_send.is_some() && !self.has_non_live_send_overlay() {
             self.handle_live_send_key(key);
+            return None;
+        }
+
+        if let Some(dialog) = &mut self.new_issue_dialog {
+            match dialog.handle_key(key) {
+                DialogResult::Continue => {}
+                DialogResult::Cancel => {
+                    self.new_issue_dialog = None;
+                }
+                DialogResult::Submit(data) => {
+                    self.new_issue_dialog = None;
+                    return Some(Action::CreateGitHubIssue {
+                        repository: data.repository,
+                        request: data.request,
+                    });
+                }
+            }
             return None;
         }
 
@@ -2583,8 +2603,13 @@ impl HomeView {
         // Registry-driven action keys.
         let ctx = bindings::Ctx {
             view_mode: self.view_mode.clone(),
+            group_by: self.group_by,
             sort_order: self.sort_order,
             has_search: !self.search_matches.is_empty(),
+            selected_unattached_work_item: matches!(
+                self.flat_items.get(self.cursor),
+                Some(Item::WorkItem { item, .. }) if item.attached_session_id.is_none()
+            ),
             project_group_selected: self.project_group_at_cursor().is_some(),
         };
         match bindings::resolve_action(&key, self.strict_hotkeys, &ctx) {
@@ -2749,6 +2774,7 @@ impl HomeView {
                 self.update_selected();
             }
             ActionId::NewSession => self.open_new_session_dialog(),
+            ActionId::NewIssue => self.open_new_issue_dialog(),
             ActionId::NewFromSelection => self.open_new_from_selection(),
             ActionId::NewFromProject => self.open_project_session_picker(),
             ActionId::AttachTerminal => return self.attach_terminal_for_selected(),
@@ -3821,6 +3847,10 @@ impl HomeView {
     }
 
     fn jump_to_next_waiting(&mut self) {
+        if self.group_by == GroupByMode::Issues {
+            self.jump_to_next_issue_attention();
+            return;
+        }
         let len = self.flat_items.len();
         if len == 0 {
             return;
@@ -4077,6 +4107,42 @@ impl HomeView {
                 Some(Action::AttachToolSession(id, tool_name))
             }
         }
+    }
+
+    fn jump_to_next_issue_attention(&mut self) {
+        let len = self.flat_items.len();
+        if len == 0 {
+            return;
+        }
+
+        let Some((idx, _priority, _distance)) = self
+            .flat_items
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, item)| {
+                let Item::WorkItem { item, .. } = item else {
+                    return None;
+                };
+                let attention = item.attention_state?;
+                if item.attached_session_id.is_none()
+                    || attention == crate::github::AttentionState::Stopped
+                {
+                    return None;
+                }
+                let distance = (idx + len - self.cursor) % len;
+                if distance == 0 {
+                    return None;
+                }
+                Some((idx, attention.priority(), distance))
+            })
+            .min_by_key(|(_idx, priority, distance)| (*priority, *distance))
+        else {
+            return;
+        };
+
+        self.cursor = idx;
+        self.mouse_pos = None;
+        self.update_selected();
     }
 
     /// Resolve the "Tab swap" action that fires when
@@ -4910,6 +4976,25 @@ impl HomeView {
     /// otherwise the full dialog. Shared by `'n'` and the
     /// click-in-empty-sidebar shortcut so they can't drift.
     pub(super) fn open_new_session_dialog(&mut self) {
+        if self.group_by == GroupByMode::Issues {
+            match self.flat_items.get(self.cursor) {
+                Some(Item::WorkItem { item, .. }) if item.attached_session_id.is_none() => {}
+                Some(Item::WorkItem { .. }) => {
+                    self.info_dialog = Some(InfoDialog::sized_to_fit(
+                        "Issue already attached",
+                        "This Work Item already has an attached session.",
+                    ));
+                    return;
+                }
+                _ => {
+                    self.info_dialog = Some(InfoDialog::sized_to_fit(
+                        "Select an issue",
+                        "Select an unattached Work Item before creating an issue-backed session.",
+                    ));
+                    return;
+                }
+            }
+        }
         if self.creating_stub_id.is_some() {
             self.info_dialog = Some(InfoDialog::new(
                 "Please Wait",
@@ -4941,6 +5026,42 @@ impl HomeView {
         self.seed_new_session_from_selected_work_item();
     }
 
+    pub(super) fn open_new_issue_dialog(&mut self) {
+        let Some(project) = self.active_issue_project() else {
+            self.info_dialog = Some(InfoDialog::sized_to_fit(
+                "No issue project",
+                "Save a GitHub-backed project before creating an issue from the TUI.",
+            ));
+            return;
+        };
+        let repository = match self.project_issue_states.get(&project.path) {
+            Some(super::ProjectIssueReadState::Ready { repository, .. })
+            | Some(super::ProjectIssueReadState::MissingCache { repository }) => repository.clone(),
+            Some(super::ProjectIssueReadState::MissingRemote) => {
+                self.info_dialog = Some(InfoDialog::sized_to_fit(
+                    "No GitHub remote",
+                    "The active project does not have a GitHub remote.",
+                ));
+                return;
+            }
+            Some(super::ProjectIssueReadState::LoadFailed(error)) => {
+                self.info_dialog = Some(InfoDialog::sized_to_fit(
+                    "Issues unavailable",
+                    &format!("Could not load the issue cache: {error}"),
+                ));
+                return;
+            }
+            None => {
+                self.info_dialog = Some(InfoDialog::sized_to_fit(
+                    "Issues unavailable",
+                    "Issue metadata has not loaded for the active project yet.",
+                ));
+                return;
+            }
+        };
+        self.new_issue_dialog = Some(NewIssueDialog::new(repository));
+    }
+
     fn seed_new_session_from_selected_work_item(&mut self) {
         let Some(Item::WorkItem {
             project_path, item, ..
@@ -4948,6 +5069,9 @@ impl HomeView {
         else {
             return;
         };
+        if item.attached_session_id.is_some() {
+            return;
+        }
         let Some(dialog) = &mut self.new_dialog else {
             return;
         };
@@ -5842,6 +5966,10 @@ impl HomeView {
             dialog.handle_paste(text);
             return;
         }
+        if let Some(ref mut dialog) = self.new_issue_dialog {
+            dialog.handle_paste(text);
+            return;
+        }
         if let Some(ref mut settings) = self.settings_view {
             settings.handle_paste(text);
             return;
@@ -6400,6 +6528,10 @@ impl HomeView {
             return;
         }
         if let Some(ref mut dialog) = self.new_dialog {
+            dialog.handle_paste(&s);
+            return;
+        }
+        if let Some(ref mut dialog) = self.new_issue_dialog {
             dialog.handle_paste(&s);
             return;
         }

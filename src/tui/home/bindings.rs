@@ -36,6 +36,7 @@ pub enum ActionId {
     SearchStart,
     SearchNext,
     NewSession,
+    NewIssue,
     NewFromSelection,
     NewFromProject,
     AttachTerminal,
@@ -121,6 +122,8 @@ const fn f(n: u8) -> Chord {
 pub enum Context {
     Always,
     TerminalView,
+    IssuesMode,
+    NewSessionAllowed,
     AttentionSort,
     /// Favorites are actionable: either the Attention sort is active, where
     /// favorite is a within-tier tiebreak, or `session.favorites_first` is on,
@@ -170,8 +173,10 @@ pub struct Binding {
 /// Runtime state the guards consult.
 pub struct Ctx {
     pub view_mode: ViewMode,
+    pub group_by: crate::session::config::GroupByMode,
     pub sort_order: SortOrder,
     pub has_search: bool,
+    pub selected_unattached_work_item: bool,
     /// True when the cursor sits on a real project header in project view, so
     /// the pin toggle can claim its chord ahead of the projects-dialog binding.
     pub project_group_selected: bool,
@@ -189,6 +194,11 @@ fn context_holds(context: Context, ctx: &Ctx) -> bool {
     match context {
         Context::Always => true,
         Context::TerminalView => ctx.view_mode == ViewMode::Terminal,
+        Context::IssuesMode => ctx.group_by == crate::session::config::GroupByMode::Issues,
+        Context::NewSessionAllowed => {
+            ctx.group_by != crate::session::config::GroupByMode::Issues
+                || ctx.selected_unattached_work_item
+        }
         Context::AttentionSort => ctx.sort_order == SortOrder::Attention,
         Context::FavoritesUsable => {
             ctx.sort_order == SortOrder::Attention || crate::session::favorites_first()
@@ -476,10 +486,26 @@ pub static BINDINGS: &[Binding] = &[
         palette: None,
     },
     Binding {
+        id: ActionId::NewIssue,
+        non_strict: &[k('N')],
+        strict: &[k('N')],
+        context: Context::IssuesMode,
+        help: Some(HelpMeta {
+            section: HelpSection::Actions,
+            desc: "New GitHub issue",
+        }),
+        palette: Some(PaletteMeta {
+            title: "New GitHub issue",
+            keywords: &["issue", "github", "triage"],
+            group: PaletteGroup::Actions,
+            serve_only: false,
+        }),
+    },
+    Binding {
         id: ActionId::NewSession,
         non_strict: &[k('n')],
         strict: &[k('N')],
-        context: Context::Always,
+        context: Context::NewSessionAllowed,
         help: Some(HelpMeta {
             section: HelpSection::Actions,
             desc: "New session",
@@ -954,6 +980,7 @@ pub static BINDINGS: &[Binding] = &[
 pub fn palette_id(id: ActionId) -> &'static str {
     match id {
         ActionId::NewSession => "new-session",
+        ActionId::NewIssue => "new-issue",
         ActionId::NewFromSelection => "new-from-selection",
         ActionId::NewFromProject => "new-from-project",
         ActionId::AttachTerminal => "attach-terminal",
@@ -1000,8 +1027,10 @@ mod tests {
     fn ctx() -> Ctx {
         Ctx {
             view_mode: ViewMode::Structured,
+            group_by: crate::session::config::GroupByMode::Manual,
             sort_order: SortOrder::Newest,
             has_search: false,
+            selected_unattached_work_item: false,
             project_group_selected: false,
         }
     }
@@ -1236,6 +1265,22 @@ mod tests {
     }
 
     #[test]
+    fn issues_mode_new_session_requires_unattached_work_item() {
+        let mut c = ctx();
+        c.group_by = crate::session::config::GroupByMode::Issues;
+
+        assert_eq!(resolve(&key('n'), false, &c), None);
+        assert_eq!(
+            resolve(&key('N'), true, &c),
+            Some(ActionId::NewIssue),
+            "strict Shift+N remains the contextual new-issue action"
+        );
+
+        c.selected_unattached_work_item = true;
+        assert_eq!(resolve(&key('n'), false, &c), Some(ActionId::NewSession));
+    }
+
+    #[test]
     fn strict_bare_lowercase_action_letters_are_unbound() {
         // They fall through to the dispatcher's typing-guard, not an action.
         let c = ctx();
@@ -1246,9 +1291,9 @@ mod tests {
         }
     }
 
-    // #3038: a committed search must never shadow Shift+N. Only bare `n` cycles
-    // (forward); every `N`/Shift+N chord stays a new-session action whether or
-    // not a search is committed.
+    // #3038: a committed search must never shadow Shift+N. Only bare `n`
+    // cycles forward; every `N`/Shift+N chord stays a new-session action
+    // outside Issues mode whether or not a search is committed.
     #[test]
     fn committed_search_cycles_n_but_never_shadows_shift_new_session() {
         let mut c = ctx();
@@ -1277,6 +1322,15 @@ mod tests {
             resolve(&ctrl_key('n'), true, &c),
             Some(ActionId::NewFromSelection)
         );
+    }
+
+    #[test]
+    fn shift_n_creates_issue_only_in_issues_mode() {
+        let mut c = ctx();
+        c.group_by = crate::session::config::GroupByMode::Issues;
+
+        assert_eq!(resolve(&key('N'), false, &c), Some(ActionId::NewIssue));
+        assert_eq!(resolve(&key('N'), true, &c), Some(ActionId::NewIssue));
     }
 
     #[test]

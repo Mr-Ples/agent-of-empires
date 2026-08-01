@@ -80,6 +80,65 @@ fn clear_reported_session_creates(reported: u32, outcome: crate::telemetry::Send
     });
 }
 
+fn create_github_issue_blocking(
+    repository: crate::github::IssueRepository,
+    request: crate::github::IssueCreateRequest,
+) -> Result<String> {
+    let token = github_issue_token().context("GitHub authentication is required")?;
+    let app_dir = crate::session::get_app_dir().context("failed to locate app data directory")?;
+    let handle = std::thread::spawn(move || -> Result<String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("failed to start GitHub issue runtime")?;
+        runtime.block_on(async move {
+            let client = crate::github::GitHubClient::authenticated(
+                crate::github::GitHubClientConfig {
+                    api_base: crate::github::DEFAULT_GITHUB_API_BASE.to_string(),
+                    user_agent: crate::github::DEFAULT_USER_AGENT.to_string(),
+                    timeout: Duration::from_secs(20),
+                },
+                &token,
+            )
+            .context("failed to build GitHub client")?;
+            let store =
+                crate::github::IssueSyncStore::new(crate::github::issue_sync_cache_dir(app_dir));
+            let service = crate::github::IssueSyncer::new(client, store);
+            let snapshot = service
+                .create_issue(
+                    &repository,
+                    &request,
+                    crate::github::IssueSyncAuthMode::Interactive,
+                )
+                .await?;
+            Ok(snapshot.issue.url)
+        })
+    });
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("GitHub issue creation worker panicked"))?
+}
+
+fn github_issue_token() -> Option<String> {
+    ["GITHUB_TOKEN", "GH_TOKEN"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .map(|value| value.trim().to_string())
+        .find(|value| !value.is_empty())
+        .or_else(|| {
+            let output = std::process::Command::new("gh")
+                .args(["auth", "token"])
+                .stderr(Stdio::null())
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let token = String::from_utf8(output.stdout).ok()?.trim().to_string();
+            (!token.is_empty()).then_some(token)
+        })
+}
+
 /// Count one TUI session create for the opt-in telemetry trend counter. Bounded
 /// accumulator, read-and-decremented by the snapshot paths; a no-op for
 /// opted-out installs (the snapshot is never built / sent). Called from
@@ -3402,6 +3461,27 @@ impl App {
             Action::SetTransientStatus(text) => {
                 self.update_status = Some(UpdateStatus::transient(text));
             }
+            Action::CreateGitHubIssue {
+                repository,
+                request,
+            } => {
+                self.update_status = Some(UpdateStatus::transient(
+                    "creating GitHub issue...".to_string(),
+                ));
+                match create_github_issue_blocking(repository, request) {
+                    Ok(url) => {
+                        self.home.refresh_issue_work_items();
+                        self.update_status = Some(UpdateStatus::transient(format!(
+                            "created GitHub issue: {url}"
+                        )));
+                    }
+                    Err(error) => {
+                        self.update_status = Some(UpdateStatus::transient(format!(
+                            "issue create failed: {error}"
+                        )));
+                    }
+                }
+            }
             Action::SpawnImagePull(image) => {
                 if self.image_pull_rx.is_some() {
                     self.update_status = Some(UpdateStatus::transient(
@@ -4105,6 +4185,10 @@ pub enum Action {
     SetTheme(String),
     SpawnUpdate(crate::update::install::InstallMethod, String),
     SetTransientStatus(String),
+    CreateGitHubIssue {
+        repository: crate::github::IssueRepository,
+        request: crate::github::IssueCreateRequest,
+    },
     /// Pull the sandbox image after the user accepts the "image update
     /// available" banner's confirm. Deferred to `execute_action` so the loop
     /// can show a "pulling…" status before the blocking pull starts.

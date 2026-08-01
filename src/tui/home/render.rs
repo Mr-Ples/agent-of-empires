@@ -880,6 +880,7 @@ impl HomeView {
 
         render_dialogs!(
             new_dialog,
+            new_issue_dialog,
             confirm_dialog,
             unified_delete_dialog,
             group_delete_options_dialog,
@@ -1072,7 +1073,9 @@ impl HomeView {
             );
         }
 
-        if !self.has_instances() && !self.has_any_groups() {
+        // Issues mode can legitimately render Work Items before any session
+        // rows exist.
+        if !self.has_instances() && !self.has_any_groups() && self.group_by != GroupByMode::Issues {
             let empty_text = vec![
                 Line::from(""),
                 Line::from("No sessions yet").style(Style::default().fg(theme.dimmed)),
@@ -1329,6 +1332,7 @@ impl HomeView {
 
         self.show_help
             || self.new_dialog.is_some()
+            || self.new_issue_dialog.is_some()
             || self.confirm_dialog.is_some()
             || self.unified_delete_dialog.is_some()
             || self.group_delete_options_dialog.is_some()
@@ -3757,7 +3761,10 @@ impl HomeView {
             Some(Item::Group {
                 collapsed: false, ..
             }) => (Some("Collapse"), None),
-            Some(Item::WorkItem { .. }) => (Some("New"), None),
+            Some(Item::WorkItem { item, .. }) if item.attached_session_id.is_none() => {
+                (Some("New"), None)
+            }
+            Some(Item::WorkItem { .. }) => (None, None),
             Some(Item::Session { id, .. }) => {
                 if self
                     .get_instance(id)
