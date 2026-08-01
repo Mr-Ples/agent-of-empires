@@ -23,7 +23,6 @@ use super::profile::ProfileCommands;
 use super::project::ProjectCommands;
 use super::ps::PsArgs;
 use super::remove::RemoveArgs;
-use super::repl::ReplArgs;
 use super::send::SendArgs;
 #[cfg(feature = "serve")]
 use super::serve::ServeArgs;
@@ -103,9 +102,6 @@ pub enum Commands {
 
     /// Send a message to a running agent session
     Send(SendArgs),
-
-    /// Launch an interactive agent REPL in the current terminal
-    Repl(ReplArgs),
 
     /// Show session status summary
     Status(StatusArgs),
@@ -258,7 +254,6 @@ pub const CLI_COMMAND_NAMES: &[&str] = &[
     "log_level",
     "remove",
     "send",
-    "repl",
     "status",
     "killall",
     "session",
@@ -303,7 +298,6 @@ pub fn command_name(command: &Commands) -> Option<&'static str> {
         Commands::LogLevel(_) => "log_level",
         Commands::Remove(_) => "remove",
         Commands::Send(_) => "send",
-        Commands::Repl(_) => "repl",
         Commands::Status(_) => "status",
         Commands::Killall(_) => "killall",
         // Hidden trap; never a user action, never counted.

@@ -21,7 +21,6 @@ pub mod profile;
 pub mod project;
 pub mod ps;
 pub mod remove;
-pub mod repl;
 pub mod send;
 #[cfg(feature = "serve")]
 pub mod serve;
