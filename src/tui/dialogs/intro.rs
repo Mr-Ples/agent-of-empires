@@ -167,16 +167,6 @@ impl IntroDialog {
         self.pending_preview.take()
     }
 
-    /// True on every page of the wizard so xterm mouse tracking stays
-    /// off and the terminal can do native drag-to-select on the docs /
-    /// YouTube / Discord URLs (and any other text). The trade is that
-    /// the footer `[Skip]` / `[Back]` / `[Next →]` / `[Finish]` buttons aren't
-    /// clickable; navigation is keyboard-only (Enter / ← / Esc), which
-    /// the hint on each page advertises.
-    pub fn wants_text_selection(&self) -> bool {
-        true
-    }
-
     fn current_page(&self) -> Page {
         Page::all()[self.page_idx]
     }
@@ -538,7 +528,7 @@ impl IntroDialog {
                 Style::default().fg(theme.hint).italic(),
             )),
             Line::from(Span::styled(
-                "Drag to select the URLs above; your terminal handles the copy.",
+                "Drag to select text; AoE copies it on mouse-up.",
                 Style::default().fg(theme.hint).italic(),
             )),
         ];
@@ -1215,20 +1205,6 @@ mod tests {
         assert_eq!(dialog.attach_mode_cursor, AttachMode::Tmux);
         dialog.handle_key(key(KeyCode::Up));
         assert_eq!(dialog.attach_mode_cursor, AttachMode::LiveSend);
-    }
-
-    #[test]
-    fn wants_text_selection_stays_on_so_urls_drag_copy_anywhere() {
-        // The whole walkthrough wants mouse capture off so the docs /
-        // YouTube / Discord URLs (and any other text) drag-copy
-        // natively. Lock that in for every page; a future maintainer
-        // who flips this for "clickable buttons" should make a
-        // conscious choice rather than regressing the copy flow.
-        let mut dialog = IntroDialog::new("zinc");
-        for _ in 0..6 {
-            assert!(dialog.wants_text_selection());
-            dialog.handle_key(key(KeyCode::Right));
-        }
     }
 
     #[test]

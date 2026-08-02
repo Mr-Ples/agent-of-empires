@@ -4397,31 +4397,6 @@ impl HomeView {
         changed
     }
 
-    /// Whether the user is currently looking at a surface where they're
-    /// likely to want to copy text (URLs, error messages, release notes).
-    /// The App uses this to release xterm mouse capture so the terminal's
-    /// native drag-to-select works without a modifier; mouse capture comes
-    /// back as soon as the surface is dismissed.
-    ///
-    /// Add new dialogs here only when their content is meant to be copied,
-    /// not for every modal: capture toggling has a small but visible cost
-    /// (the wheel-scroll on the dashboard preview won't work while it's
-    /// off).
-    pub fn wants_text_selection(&self) -> bool {
-        #[cfg(feature = "serve")]
-        let serve_open = self.serve_view.is_some();
-        #[cfg(not(feature = "serve"))]
-        let serve_open = false;
-
-        serve_open
-            || self.info_dialog.is_some()
-            || self.changelog_dialog.is_some()
-            || self
-                .intro_dialog
-                .as_ref()
-                .is_some_and(|d| d.wants_text_selection())
-    }
-
     /// Same membership as `has_dialog()` minus live-send. Two callers:
     ///
     /// - List-row click routing: clicks must keep working in live mode

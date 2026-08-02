@@ -17,6 +17,7 @@ pub(crate) mod plugin_ui;
 pub(crate) mod remote_home;
 pub(crate) mod responsive;
 mod restart_poller;
+mod selection;
 pub mod settings;
 mod status_poller;
 mod stop_poller;

@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use super::attached_status_hooks::AttachedStatusHookWatcher;
 use super::home::{HomeView, TerminalMode};
+use super::selection::GlobalSelection;
 use super::status_poller::StatusUpdate;
 use super::styles::Theme;
 use crate::containers::image_update::ImageUpdate;
@@ -248,6 +249,7 @@ pub struct App {
     update_rx: Option<tokio::sync::oneshot::Receiver<anyhow::Result<UpdateInfo>>>,
     update_status: Option<UpdateStatus>,
     update_status_rx: Option<tokio::sync::oneshot::Receiver<anyhow::Result<()>>>,
+    global_selection: GlobalSelection,
     /// Latest version the user dismissed via Ctrl+x. Persisted to
     /// `app_state.dismissed_update_version` so the snooze survives
     /// `aoe` restarts (per #1140). The banner stays hidden while the
@@ -271,11 +273,8 @@ pub struct App {
     /// reader thread on stdin; if it's alive when tmux attach-session starts,
     /// the two compete for stdin and tmux fails to initialize its client.
     event_stream: Option<EventStream>,
-    /// Tracks whether we currently have xterm mouse-tracking enabled. The TUI
-    /// turns it off while a copy-friendly surface is open (`HomeView::
-    /// wants_text_selection`) so users can drag-select natively, then turns
-    /// it back on when the surface dismisses. Default true to match the
-    /// startup `EnableMouseCapture` in `tui::run`.
+    /// Tracks whether we currently have xterm mouse-tracking enabled. Default
+    /// true to match the startup `EnableMouseCapture` in `tui::run`.
     mouse_captured: bool,
     /// Whether the resolved config permits xterm mouse tracking (the
     /// `session.mouse_capture` field plus the `AOE_MOUSE_CAPTURE` backstop).
@@ -430,6 +429,20 @@ fn skip_predraw_cursor_hide(live_send_active: bool, has_overlay: bool) -> bool {
 }
 
 impl App {
+    fn global_selection_bounds_at(&self, col: u16, row: u16) -> Option<Rect> {
+        let pos = Position::from((col, row));
+        if self.home.list_area.contains(pos) {
+            return Some(self.home.list_area);
+        }
+        if self.home.preview_pane_area.contains(pos) {
+            return Some(self.home.preview_pane_area);
+        }
+        if self.home.diff_area.contains(pos) {
+            return Some(self.home.diff_area);
+        }
+        None
+    }
+
     /// Is this key event a candidate for paste-burst accumulation?
     /// Printable ASCII Char or Enter, with no modifiers (or shift only).
     /// Burst detection ignores Ctrl/Alt-modified chords because those
@@ -583,6 +596,7 @@ impl App {
             update_rx: None,
             update_status: None,
             update_status_rx: None,
+            global_selection: GlobalSelection::default(),
             dismissed_update_version,
             image_update: None,
             image_update_rx: None,
@@ -611,13 +625,8 @@ impl App {
         })
     }
 
-    /// Turn xterm mouse tracking on or off to match the current view state.
-    ///
-    /// **Contract**: must be called after any handler that may open or close
-    /// a surface counted by `HomeView::wants_text_selection`. Currently the
-    /// event-loop `Event::Key` arm and the tail of `with_raw_mode_disabled`
-    /// cover this; new event sources that mutate dialog state need to call
-    /// this too or mouse capture will lag a frame behind reality.
+    /// Turn xterm mouse tracking on or off to match the current config and
+    /// terminal environment.
     fn sync_mouse_capture(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
@@ -631,8 +640,7 @@ impl App {
         // on the next sync instead of leaving it stuck on. `mosh_active` is
         // folded in too so a mid-session enable never emits the escape under
         // Mosh, matching the startup gate in `tui::run`.
-        let desired =
-            self.mouse_capture_allowed && !self.mosh_active && !self.home.wants_text_selection();
+        let desired = self.mouse_capture_allowed && !self.mosh_active;
         if desired == self.mouse_captured {
             return Ok(());
         }
@@ -845,10 +853,8 @@ impl App {
     ) -> Result<()> {
         // Initial render
         crate::tui::clear_terminal(terminal)?;
-        // Sync mouse capture before the first paint so any onboarding
-        // surface that wants native drag-to-select (intro Welcome page,
-        // changelog, info dialog) gets capture turned off on frame 1.
-        // Otherwise the user would have to press a key first.
+        // Sync mouse capture before the first paint so the global in-app
+        // selector can receive mouse drags immediately.
         self.sync_mouse_capture(terminal)?;
         self.draw(terminal)?;
 
@@ -1030,6 +1036,7 @@ impl App {
                             if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
                                 continue;
                             }
+                            let _ = self.global_selection.clear();
                             // Paste-burst detector for VoiceInk + Mosh ergonomics.
                             // Mosh strips bracketed-paste markers, so pasted
                             // dictation arrives as a stream of individual KeyEvents
@@ -1139,7 +1146,10 @@ impl App {
                                 if !self.should_quit {
                                     if let Some(evt) = deferred {
                                         match evt {
-                                            Event::Key(k) => { self.handle_key(k, terminal).await?; }
+                                            Event::Key(k) => {
+                                                let _ = self.global_selection.clear();
+                                                self.handle_key(k, terminal).await?;
+                                            }
                                             Event::Paste(text) => { self.home.handle_paste(&text); }
                                             Event::Resize(_, _) => { terminal.autoresize()?; self.needs_redraw = true; }
                                             // Mirror the non-burst Mouse arm: scroll wheel
@@ -1263,6 +1273,15 @@ impl App {
                             continue;
                         }
                         Some(Ok(Event::Mouse(mouse))) => {
+                            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                                let bounds =
+                                    self.global_selection_bounds_at(mouse.column, mouse.row);
+                                self.global_selection.mouse_down(
+                                    mouse.column,
+                                    mouse.row,
+                                    bounds,
+                                );
+                            }
                             // Structured preview mouse routing is deliberately
                             // thin: the transcript is ordinary preview content,
                             // so drags fall through to the home view's own
@@ -1531,6 +1550,7 @@ impl App {
                             } else {
                                 None
                             };
+                            let mut global_copy_text = None;
                             let handled = match mouse.kind {
                                 MouseEventKind::ScrollUp if hit_scroll_target => {
                                     self.home.handle_scroll_up(mouse.column, mouse.row)
@@ -1543,6 +1563,7 @@ impl App {
                                 // need a separate guard here.
                                 MouseEventKind::Drag(MouseButton::Left) => {
                                     self.home.handle_drag_move(mouse.column, mouse.row)
+                                        || self.global_selection.mouse_drag(mouse.column, mouse.row)
                                 }
                                 MouseEventKind::Up(MouseButton::Left) => {
                                     // Finalize the drag here, but defer the
@@ -1552,7 +1573,13 @@ impl App {
                                     // (ratatui resets the back buffer on
                                     // every frame, so reading post-draw
                                     // sees empty cells).
-                                    self.home.handle_drag_end()
+                                    let home_handled = self.home.handle_drag_end();
+                                    if home_handled {
+                                        let _ = self.global_selection.clear();
+                                    } else {
+                                        global_copy_text = self.global_selection.mouse_up();
+                                    }
+                                    home_handled || global_copy_text.is_some()
                                 }
                                 // Right-click opens the sidebar context menu
                                 // (Rename / Delete) for the clicked row.
@@ -1595,6 +1622,13 @@ impl App {
                                 _ => false,
                             };
                             if handled {
+                                self.draw(terminal)?;
+                            }
+                            if let Some(text) = global_copy_text {
+                                crate::tui::clipboard::copy_to_clipboard(&text);
+                                self.update_status = Some(UpdateStatus::transient(
+                                    "Copied to clipboard".to_string(),
+                                ));
                                 self.draw(terminal)?;
                             }
                             // After the draw that paints a freshly-finalized
@@ -2264,6 +2298,8 @@ impl App {
             status_text,
             image_update.flatten(),
         );
+        self.global_selection.capture_frame(frame);
+        self.global_selection.paint(frame, &self.theme);
         // Sampled trace for frame-budget diagnostics. A full-frame trace on
         // every paint would dominate the log at `default_level = trace`, so
         // we only emit for (a) frames that break the 16ms / 60fps budget and
