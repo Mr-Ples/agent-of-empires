@@ -3549,7 +3549,7 @@ impl App {
                 ));
                 match create_github_issue_blocking(repository, request, new_labels) {
                     Ok(url) => {
-                        self.home.sync_issue_work_items();
+                        self.home.refresh_issue_work_items_after_mutation();
                         self.update_status = Some(UpdateStatus::transient(format!(
                             "created GitHub issue: {url}"
                         )));
@@ -3565,7 +3565,7 @@ impl App {
                 self.update_status = Some(UpdateStatus::transient("updating GitHub issue...".to_string()));
                 match mutate_github_issue_blocking(issue_ref, GitHubIssueMutation::Edit { request, new_labels }) {
                     Ok(()) => {
-                        self.home.sync_issue_work_items();
+                        self.home.refresh_issue_work_items_after_mutation();
                         self.update_status = Some(UpdateStatus::transient("GitHub issue updated".to_string()));
                     }
                     Err(error) => self.update_status = Some(UpdateStatus::transient(format!("issue update failed: {error}"))),
@@ -3576,7 +3576,7 @@ impl App {
                 self.update_status = Some(UpdateStatus::transient(format!("{verb} GitHub issue...")));
                 match mutate_github_issue_blocking(issue_ref, GitHubIssueMutation::SetState(state)) {
                     Ok(()) => {
-                        self.home.sync_issue_work_items();
+                        self.home.refresh_issue_work_items_after_mutation();
                         self.update_status = Some(UpdateStatus::transient(format!("GitHub issue {}", if state == crate::github::IssueState::Closed { "closed" } else { "reopened" })));
                     }
                     Err(error) => self.update_status = Some(UpdateStatus::transient(format!("issue update failed: {error}"))),

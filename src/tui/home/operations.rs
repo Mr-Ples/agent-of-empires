@@ -8,6 +8,10 @@ use crate::tui::restart_poller::RestartRequest;
 
 use super::HomeView;
 
+/// GitHub's issue list can briefly lag the response returned by a mutation.
+/// Give that list endpoint time to converge before reconciling the full cache.
+const ISSUE_MUTATION_SYNC_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+
 pub(crate) fn issue_context_prompt_for_new_session(
     data: &NewSessionData,
     structured: bool,
@@ -286,10 +290,41 @@ impl HomeView {
         self.start_issue_sync(project.path, repository);
     }
 
+    /// Show the mutation response immediately, then reconcile the complete
+    /// repository after GitHub's list endpoint has had time to converge.
+    pub(in crate::tui) fn refresh_issue_work_items_after_mutation(&mut self) {
+        self.refresh_issue_work_items_from_cache();
+
+        let Some(project) = self.active_issue_project().cloned() else {
+            return;
+        };
+        let Some(repository) = self.project_issue_states.get(&project.path).and_then(|state| {
+            match state {
+                super::ProjectIssueReadState::Ready { repository, .. }
+                | super::ProjectIssueReadState::MissingCache { repository }
+                | super::ProjectIssueReadState::Syncing { repository } => Some(repository.clone()),
+                super::ProjectIssueReadState::MissingRemote
+                | super::ProjectIssueReadState::LoadFailed(_) => None,
+            }
+        }) else {
+            return;
+        };
+        self.start_issue_sync_with_delay(project.path, repository, ISSUE_MUTATION_SYNC_DELAY);
+    }
+
     fn start_issue_sync(
         &mut self,
         project_path: String,
         repository: crate::github::IssueRepository,
+    ) {
+        self.start_issue_sync_with_delay(project_path, repository, std::time::Duration::ZERO);
+    }
+
+    fn start_issue_sync_with_delay(
+        &mut self,
+        project_path: String,
+        repository: crate::github::IssueRepository,
+        delay: std::time::Duration,
     ) {
         if self.issue_sync_rx.is_some() {
             return;
@@ -307,6 +342,9 @@ impl HomeView {
         );
         self.rebuild_flat_items();
         std::thread::spawn(move || {
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
             let result = (|| -> anyhow::Result<()> {
                 let Some(token) = crate::tui::github_issue_token() else {
                     let store = crate::github::IssueSyncStore::new(

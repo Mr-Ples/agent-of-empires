@@ -6962,6 +6962,15 @@ impl HomeView {
         self.project_issue_states = states;
     }
 
+    /// Re-read the cache after a mutation without immediately querying the
+    /// repository again. The mutation response is authoritative, while
+    /// GitHub's issue list can briefly lag it and overwrite the fresh cache
+    /// entry with the previous state.
+    pub(in crate::tui) fn refresh_issue_work_items_from_cache(&mut self) {
+        self.refresh_project_work_items();
+        self.rebuild_flat_items();
+    }
+
     fn runtime_liveness_from_status(
         status: crate::session::Status,
     ) -> crate::github::RuntimeLiveness {
