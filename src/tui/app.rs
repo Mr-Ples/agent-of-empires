@@ -3582,6 +3582,29 @@ impl App {
                     Err(error) => self.update_status = Some(UpdateStatus::transient(format!("issue update failed: {error}"))),
                 }
             }
+            Action::AttachSessionToIssue {
+                session_id,
+                issue_ref,
+            } => {
+                match self.home.attach_session_to_issue(&session_id, &issue_ref) {
+                    Ok(()) => self.update_status = Some(UpdateStatus::transient(
+                        "session attached to issue".to_string(),
+                    )),
+                    Err(error) => self.update_status = Some(UpdateStatus::transient(format!(
+                        "issue attach failed: {error}"
+                    ))),
+                }
+            }
+            Action::DetachSessionFromIssue { session_id } => {
+                match self.home.detach_session_from_issue(&session_id) {
+                    Ok(()) => self.update_status = Some(UpdateStatus::transient(
+                        "session detached from issue".to_string(),
+                    )),
+                    Err(error) => self.update_status = Some(UpdateStatus::transient(format!(
+                        "issue detach failed: {error}"
+                    ))),
+                }
+            }
             Action::SpawnImagePull(image) => {
                 if self.image_pull_rx.is_some() {
                     self.update_status = Some(UpdateStatus::transient(
@@ -4313,6 +4336,13 @@ pub enum Action {
     SetGitHubIssueState {
         issue_ref: crate::github::IssueRef,
         state: crate::github::IssueState,
+    },
+    AttachSessionToIssue {
+        session_id: String,
+        issue_ref: crate::github::IssueRef,
+    },
+    DetachSessionFromIssue {
+        session_id: String,
     },
     /// Pull the sandbox image after the user accepts the "image update
     /// available" banner's confirm. Deferred to `execute_action` so the loop

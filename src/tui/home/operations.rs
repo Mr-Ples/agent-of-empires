@@ -105,6 +105,61 @@ fn worktree_rename_block(
 }
 
 impl HomeView {
+    pub(in crate::tui) fn attach_session_to_issue(
+        &mut self,
+        session_id: &str,
+        issue_ref: &crate::github::IssueRef,
+    ) -> anyhow::Result<()> {
+        if self.get_instance(session_id).is_none() {
+            anyhow::bail!("session not found: {session_id}");
+        }
+        if let Some(holder) = self
+            .instances()
+            .find(|instance| instance.id != session_id && instance.issue_ref.as_ref() == Some(issue_ref))
+        {
+            anyhow::bail!(
+                "{issue_ref} is already attached to session {}",
+                holder.id
+            );
+        }
+        let issue_ref = issue_ref.clone();
+        self.apply_user_action(session_id, |instance| {
+            instance.issue_ref = Some(issue_ref);
+        })?;
+        self.reload()?;
+        Ok(())
+    }
+
+    pub(in crate::tui) fn detach_session_from_issue(&mut self, session_id: &str) -> anyhow::Result<()> {
+        let attached = self
+            .get_instance(session_id)
+            .ok_or_else(|| anyhow::anyhow!("session not found: {session_id}"))?
+            .issue_ref
+            .is_some();
+        if !attached {
+            anyhow::bail!("session is not attached to an issue");
+        }
+        self.apply_user_action(session_id, |instance| {
+            instance.issue_ref = None;
+        })?;
+        self.reload()?;
+
+        // The issue row remains under the cursor after reload, but it no
+        // longer selects the detached session. Drop the old preview state
+        // explicitly so the next frame cannot keep painting that session's
+        // cached output while the issue detail becomes the empty-state view.
+        self.selected_session = None;
+        self.issue_preview_expanded = false;
+        self.preview_scroll_offset = 0;
+        self.preview_cache = super::PreviewCache::default();
+        self.terminal_preview_cache = super::PreviewCache::default();
+        self.container_terminal_preview_cache = super::PreviewCache::default();
+        self.tool_preview_cache = super::PreviewCache::default();
+        self.clear_preview_selection();
+        self.clear_preview_pane_sync();
+        Ok(())
+    }
+
     pub(super) fn recover_github_auth(&mut self) {
         let Some(project_path) = self
             .active_issue_project()

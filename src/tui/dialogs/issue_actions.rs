@@ -17,6 +17,8 @@ pub enum IssueAction {
         new_labels: Vec<String>,
     },
     SetState(crate::github::IssueState),
+    AttachSession(String),
+    DetachSession,
 }
 
 pub struct IssueActionsDialog {
@@ -31,10 +33,19 @@ pub struct IssueActionsDialog {
     label_cursor: usize,
     new_label: Option<Input>,
     new_labels: Vec<String>,
+    attached_session_id: Option<String>,
+    session_choices: Vec<(String, String)>,
+    session_picker: bool,
+    session_cursor: usize,
 }
 
 impl IssueActionsDialog {
-    pub fn new(issue: IssueRecord, mut label_options: Vec<String>) -> Self {
+    pub fn new(
+        issue: IssueRecord,
+        mut label_options: Vec<String>,
+        attached_session_id: Option<String>,
+        session_choices: Vec<(String, String)>,
+    ) -> Self {
         label_options.push(crate::github::DEFAULT_TRIAGE_LABEL.to_string());
         for label in &issue.labels {
             label_options.push(label.name.clone());
@@ -64,10 +75,36 @@ impl IssueActionsDialog {
             menu_cursor: 0,
             editing: false,
             edit_field: 0,
+            attached_session_id,
+            session_choices,
+            session_picker: false,
+            session_cursor: 0,
         }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> DialogResult<IssueAction> {
+        if self.session_picker {
+            match key.code {
+                KeyCode::Esc => self.session_picker = false,
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.session_cursor = self.session_cursor.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if !self.session_choices.is_empty() {
+                        self.session_cursor =
+                            (self.session_cursor + 1).min(self.session_choices.len() - 1);
+                    }
+                }
+                KeyCode::Enter => {
+                    if let Some((id, _)) = self.session_choices.get(self.session_cursor) {
+                        return DialogResult::Submit(IssueAction::AttachSession(id.clone()));
+                    }
+                }
+                _ => {}
+            }
+            return DialogResult::Continue;
+        }
+
         if let Some(input) = &mut self.new_label {
             match key.code {
                 KeyCode::Esc => self.new_label = None,
@@ -136,7 +173,7 @@ impl IssueActionsDialog {
 
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.menu_cursor = self.menu_cursor.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => self.menu_cursor = (self.menu_cursor + 1).min(2),
+            KeyCode::Down | KeyCode::Char('j') => self.menu_cursor = (self.menu_cursor + 1).min(3),
             KeyCode::Enter => match self.menu_cursor {
                 0 => self.editing = true,
                 1 => {
@@ -145,6 +182,13 @@ impl IssueActionsDialog {
                     } else {
                         crate::github::IssueState::Open
                     }));
+                }
+                2 => {
+                    if self.attached_session_id.is_some() {
+                        return DialogResult::Submit(IssueAction::DetachSession);
+                    }
+                    self.session_picker = true;
+                    self.session_cursor = 0;
                 }
                 _ => return DialogResult::Cancel,
             },
@@ -173,6 +217,10 @@ impl IssueActionsDialog {
     }
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        if self.session_picker {
+            self.render_session_picker(frame, area, theme);
+            return;
+        }
         let dialog_area = super::centered_rect(area, 76, if self.editing { 20 } else { 12 });
         frame.render_widget(Clear, dialog_area);
         let block = Block::default()
@@ -186,9 +234,29 @@ impl IssueActionsDialog {
         frame.render_widget(block, dialog_area);
 
         if !self.editing {
-            let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).split(inner);
+            let rows = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(inner);
             frame.render_widget(Paragraph::new(format!("{}  {}", self.issue.issue_ref, self.issue.title)).style(Style::default().fg(theme.text)), rows[0]);
-            for (index, label) in ["Edit issue", if self.issue.state == crate::github::IssueState::Open { "Close issue" } else { "Reopen issue" }, "Cancel"].iter().enumerate() {
+            let attachment_label = if self.attached_session_id.is_some() {
+                "Detach session"
+            } else {
+                "Attach existing session"
+            };
+            for (index, label) in [
+                "Edit issue",
+                if self.issue.state == crate::github::IssueState::Open { "Close issue" } else { "Reopen issue" },
+                attachment_label,
+                "Cancel",
+            ]
+            .iter()
+            .enumerate()
+            {
                 let style = if index == self.menu_cursor { Style::default().fg(theme.background).bg(theme.accent) } else { Style::default().fg(theme.text) };
                 frame.render_widget(Paragraph::new(format!("{} {}", if index == self.menu_cursor { ">" } else { " " }, label)).style(style), rows[index + 1]);
             }
@@ -264,5 +332,52 @@ impl IssueActionsDialog {
                 .style(Style::default().fg(theme.dimmed)),
             rows[3],
         );
+    }
+
+    fn render_session_picker(&self, frame: &mut Frame, area: Rect, theme: &Theme) {
+        let height = (self.session_choices.len() as u16 + 4).clamp(8, 20);
+        let dialog_area = super::centered_rect(area, 76, height);
+        frame.render_widget(Clear, dialog_area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme.accent))
+            .title(" Attach existing session ");
+        let inner = block.inner(dialog_area);
+        frame.render_widget(block, dialog_area);
+        if self.session_choices.is_empty() {
+            frame.render_widget(
+                Paragraph::new("No sessions are available to attach. Press Esc.")
+                    .style(Style::default().fg(theme.text)),
+                inner,
+            );
+            return;
+        }
+        let rows = Layout::vertical(
+            std::iter::once(Constraint::Length(1))
+                .chain((0..self.session_choices.len()).map(|_| Constraint::Length(1)))
+                .chain(std::iter::once(Constraint::Length(1)))
+                .collect::<Vec<_>>(),
+        )
+        .split(inner);
+        frame.render_widget(
+            Paragraph::new("Select a session, Enter attaches, Esc returns")
+                .style(Style::default().fg(theme.text)),
+            rows[0],
+        );
+        for (index, (id, title)) in self.session_choices.iter().enumerate() {
+            let label = format!(
+                "{} {} [{}]",
+                if index == self.session_cursor { ">" } else { " " },
+                title,
+                id
+            );
+            let style = if index == self.session_cursor {
+                Style::default().fg(theme.background).bg(theme.accent)
+            } else {
+                Style::default().fg(theme.text)
+            };
+            frame.render_widget(Paragraph::new(label).style(style), rows[index + 1]);
+        }
     }
 }

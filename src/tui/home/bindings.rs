@@ -530,7 +530,16 @@ pub static BINDINGS: &[Binding] = &[
         }),
         palette: Some(PaletteMeta {
             title: "Issue actions",
-            keywords: &["issue", "github", "edit", "close", "reopen", "labels"],
+            keywords: &[
+                "issue",
+                "github",
+                "edit",
+                "close",
+                "reopen",
+                "labels",
+                "attach",
+                "detach",
+            ],
             group: PaletteGroup::Actions,
             serve_only: false,
         }),

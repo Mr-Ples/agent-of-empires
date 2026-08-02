@@ -1760,6 +1760,9 @@ impl Instance {
         if pre.group_path != post.group_path {
             self.group_path = post.group_path.clone();
         }
+        if pre.issue_ref != post.issue_ref {
+            self.issue_ref = post.issue_ref.clone();
+        }
         if pre.archived_at != post.archived_at {
             self.archived_at = post.archived_at;
         }

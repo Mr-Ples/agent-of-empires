@@ -1754,12 +1754,19 @@ impl HomeView {
                         return None;
                     };
                     let issue_ref = item.issue_ref.clone();
+                    let attached_session_id = item.attached_session_id.clone();
                     self.issue_actions_dialog = None;
                     return Some(match action {
                         IssueAction::Edit { request, new_labels } => {
                             Action::EditGitHubIssue { issue_ref, request, new_labels }
                         }
                         IssueAction::SetState(state) => Action::SetGitHubIssueState { issue_ref, state },
+                        IssueAction::AttachSession(session_id) => {
+                            Action::AttachSessionToIssue { session_id, issue_ref }
+                        }
+                        IssueAction::DetachSession => Action::DetachSessionFromIssue {
+                            session_id: attached_session_id.unwrap_or_default(),
+                        },
                     });
                 }
             }
@@ -5173,7 +5180,20 @@ impl HomeView {
             .collect::<Vec<_>>();
         label_options.sort();
         label_options.dedup();
-        self.issue_actions_dialog = Some(IssueActionsDialog::new(item.issue.clone(), label_options));
+        let issue = item.issue.clone();
+        let attached_session_id = item.attached_session_id.clone();
+        let mut session_choices = self
+            .instances()
+            .filter(|instance| !matches!(instance.status, Status::Deleting))
+            .map(|instance| (instance.id.clone(), instance.title.clone()))
+            .collect::<Vec<_>>();
+        session_choices.sort_by(|left, right| left.1.to_lowercase().cmp(&right.1.to_lowercase()));
+        self.issue_actions_dialog = Some(IssueActionsDialog::new(
+            issue,
+            label_options,
+            attached_session_id,
+            session_choices,
+        ));
     }
 
     fn seed_new_session_from_selected_work_item(&mut self) {
