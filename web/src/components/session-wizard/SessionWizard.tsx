@@ -121,6 +121,8 @@ export interface WizardPrefill {
   /** Defaults true when `issueRef` is set. False keeps the attachment but
    *  skips the initial Issue Context turn. */
   injectIssueContext?: boolean;
+  /** Generated label-aware issue prompt, editable before launch. */
+  initialPrompt?: string;
 }
 
 interface Props {
@@ -150,6 +152,7 @@ export function SessionWizard({ onClose, onCreated, onIssueCreated, prefill }: P
         extraRepoPaths: prefill.scratch ? [] : baseInitial.extraRepoPaths,
         issueRef: prefill.issueRef || "",
         injectIssueContext: prefill.injectIssueContext ?? true,
+        initialPrompt: prefill.initialPrompt || baseInitial.customInstruction,
       }
     : baseInitial;
 
@@ -329,6 +332,8 @@ export function SessionWizard({ onClose, onCreated, onIssueCreated, prefill }: P
       custom_instruction: d.customInstruction || undefined,
       issue_ref: d.issueRef || undefined,
       inject_issue_context: d.issueRef ? d.injectIssueContext : undefined,
+      initial_prompt:
+        d.initialPrompt.trim() && (!d.issueRef || d.injectIssueContext) ? d.initialPrompt : undefined,
       profile: d.profile || undefined,
       // Structured view runs when the agent is ACP-capable and the user
       // kept the per-session toggle on (default). Capability comes from

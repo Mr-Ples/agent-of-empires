@@ -25,10 +25,25 @@ pub(crate) fn issue_context_prompt_for_new_session(
 
     #[cfg(feature = "serve")]
     {
-        let issue_ref = data.issue_ref.as_ref()?;
-        if !structured || !data.inject_issue_context.unwrap_or(true) {
+        if !structured {
             return None;
         }
+        if data
+            .issue_ref
+            .is_some()
+            && !data.inject_issue_context.unwrap_or(true)
+        {
+            return None;
+        }
+        if let Some(prompt) = data
+            .initial_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|prompt| !prompt.is_empty())
+        {
+            return Some(prompt.to_string());
+        }
+        let issue_ref = data.issue_ref.as_ref()?;
         let cached_issue_record = crate::session::get_app_dir()
             .ok()
             .and_then(|app_dir| crate::github::load_cached_issue_record(app_dir, issue_ref));

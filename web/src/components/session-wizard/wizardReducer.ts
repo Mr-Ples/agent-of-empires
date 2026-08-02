@@ -76,6 +76,8 @@ export interface WizardData {
   /** True by default for issue-first structured sessions. Toggling this off
    *  keeps `issueRef` attached but suppresses the initial issue-context turn. */
   injectIssueContext: boolean;
+  /** Editable first prompt for an issue-backed structured session. */
+  initialPrompt: string;
   [key: string]: unknown;
 }
 
@@ -149,6 +151,7 @@ export const initialData: WizardData = {
   importAcpSessionId: "",
   issueRef: "",
   injectIssueContext: true,
+  initialPrompt: "",
 };
 
 export function reducer(state: WizardState, action: Action): WizardState {

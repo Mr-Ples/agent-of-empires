@@ -2890,6 +2890,7 @@ fn should_toggle_attached_work_item_preview(
     key: KeyEvent,
     live_send_capturing: bool,
     selected_attached_work_item: bool,
+    dialog_open: bool,
 ) -> bool {
     matches!(key.code, KeyCode::Char('i'))
         && !key
@@ -2897,6 +2898,7 @@ fn should_toggle_attached_work_item_preview(
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SHIFT)
         && selected_attached_work_item
         && !live_send_capturing
+        && !dialog_open
 }
 
 impl App {
@@ -2911,6 +2913,7 @@ impl App {
             key,
             self.home.is_live_send_capturing(),
             self.home.selected_attached_work_item(),
+            self.home.has_dialog(),
         ) {
             self.home.toggle_preview_info();
             return Ok(());
@@ -4648,11 +4651,15 @@ mod tests {
         let plain_i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE);
 
         assert!(should_toggle_attached_work_item_preview(
-            plain_i, false, true
+            plain_i, false, true, false
         ));
         assert!(
-            !should_toggle_attached_work_item_preview(plain_i, true, true),
+            !should_toggle_attached_work_item_preview(plain_i, true, true, false),
             "live-send owns printable keys, so `i` must reach the agent input"
+        );
+        assert!(
+            !should_toggle_attached_work_item_preview(plain_i, false, true, true),
+            "an open modal owns printable keys, so `i` must reach the modal input"
         );
     }
 
@@ -4662,14 +4669,17 @@ mod tests {
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL),
             false,
             true,
+            false,
         ));
         assert!(!should_toggle_attached_work_item_preview(
             KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
             false,
             true,
+            false,
         ));
         assert!(!should_toggle_attached_work_item_preview(
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            false,
             false,
             false,
         ));

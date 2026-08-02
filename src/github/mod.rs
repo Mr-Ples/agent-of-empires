@@ -29,6 +29,7 @@ pub use issues::{
     LabelPromptRule, PullRequestBadge, RuntimeLiveness, ValidatedIssueCreateRequest,
     ValidatedIssueEditRequest, WorkItemListProjection, WorkItemProjection,
     WorkItemSessionAttachment, WorkItemState, DEFAULT_LABEL_PRIORITY, DEFAULT_TRIAGE_LABEL,
+    label_prompt_instructions,
 };
 pub use sync::{
     issue_sync_cache_dir, GitHubIssueClient, IssueMutationError, IssueMutationSnapshot,

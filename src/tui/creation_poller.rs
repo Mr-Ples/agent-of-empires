@@ -340,6 +340,7 @@ mod tests {
             fork_seed: Some(seed),
             issue_ref: None,
             inject_issue_context: None,
+            initial_prompt: None,
             structured: false,
         }
     }

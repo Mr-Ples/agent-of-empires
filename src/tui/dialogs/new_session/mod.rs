@@ -8,6 +8,7 @@ mod render;
 mod tests;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui_textarea::{TextArea, WrapMode};
 use std::time::Instant;
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
@@ -85,6 +86,16 @@ pub(super) const FIELD_HELP: &[FieldHelp] = &[
     },
 ];
 
+fn prompt_text_area(text: &str) -> TextArea<'static> {
+    let mut lines = text.lines().map(ToString::to_string).collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    let mut area = TextArea::new(lines);
+    area.set_wrap_mode(WrapMode::Word);
+    area
+}
+
 #[derive(Clone)]
 pub struct NewSessionData {
     pub profile: String,
@@ -124,6 +135,8 @@ pub struct NewSessionData {
     /// Whether an issue-first structured session should receive an initial
     /// Issue Context prompt. Defaults on for issue-backed structured sessions.
     pub inject_issue_context: Option<bool>,
+    /// Optional edited first prompt for an issue-backed structured session.
+    pub initial_prompt: Option<String>,
     /// Create the session in the structured (ACP) view instead of a tmux
     /// terminal. Only submitted true for ACP-capable tools on serve builds;
     /// validated at submit time via
@@ -288,6 +301,8 @@ pub struct NewSessionDialog {
     pub(super) fork_seed: Option<crate::session::ForkSeed>,
     /// Optional GitHub issue attachment carried into the submitted session.
     pub(super) issue_ref: Option<crate::github::IssueRef>,
+    /// Generated label-aware first prompt shown when an issue is attached.
+    pub(super) initial_prompt: TextArea<'static>,
     /// Per-field hit rect captured by the renderer of the main form
     /// so a mouse click / hover can target the same cells the user
     /// sees. Each entry is `(focused_field_index, rect)`. Cleared and
@@ -579,6 +594,9 @@ impl NewSessionDialog {
             scratch: false,
             fork_seed: None,
             issue_ref: None,
+            initial_prompt: prompt_text_area(
+                config.sandbox.custom_instruction.as_deref().unwrap_or_default(),
+            ),
             focusable_rects: Vec::new(),
             sandbox_config_rects: Vec::new(),
             tool_config_rects: Vec::new(),
@@ -630,6 +648,25 @@ impl NewSessionDialog {
         ));
         self.create_new_branch = true;
         self.set_issue_ref(issue_ref);
+        let config = self.resolve_config_for_path(&self.profile);
+        let selected_issue = issue.cloned().or_else(|| {
+            crate::session::get_app_dir().ok().and_then(|app_dir| {
+                crate::github::load_cached_issue_record(
+                    app_dir,
+                    self.issue_ref.as_ref().unwrap(),
+                )
+            })
+        });
+        let label_prompt = crate::github::label_prompt_instructions(
+            self.issue_ref.as_ref().unwrap(),
+            selected_issue.as_ref(),
+            &config.work_items.label_prompt_rules,
+        );
+        self.initial_prompt = prompt_text_area(if label_prompt.trim().is_empty() {
+            config.sandbox.custom_instruction.as_deref().unwrap_or_default()
+        } else {
+            &label_prompt
+        });
     }
 
     /// Preselect a specific tool by name (e.g. so a fork opens on the parent's
@@ -1466,7 +1503,16 @@ impl NewSessionDialog {
         };
         let group_field = fi;
         fi += 1;
+        let issue_prompt_field = fi;
+        fi += 1;
         let max_field = fi;
+
+        if self.focused_field == issue_prompt_field
+            && !matches!(key.code, KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab)
+        {
+            self.initial_prompt.input(key);
+            return DialogResult::Continue;
+        }
 
         // Ctrl+P opens a context-sensitive picker/config overlay
         if key.code == KeyCode::Char('p') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -2130,6 +2176,11 @@ impl NewSessionDialog {
     }
 
     pub fn handle_paste(&mut self, text: &str) {
+        let issue_prompt_field = self.current_issue_prompt_field();
+        if self.focused_field == issue_prompt_field {
+            self.initial_prompt.insert_str(text);
+            return;
+        }
         // Route to the active sub-mode input if one is open
         let target: &mut Input = if let Some(ref mut input) = self.env_editing_input {
             input
@@ -2149,6 +2200,24 @@ impl NewSessionDialog {
             self.current_input_mut()
         };
         super::paste_into_input(target, text);
+    }
+
+    fn current_issue_prompt_field(&self) -> usize {
+        let base = if self.has_profile_selection() { 1 } else { 0 };
+        let mut field = base + 2 + if self.available_tools.len() > 1 { 1 } else { 0 };
+        if self.structured_capable {
+            field += 1;
+        }
+        if !self.selected_tool_always_yolo() {
+            field += 1;
+        }
+        if !self.selected_tool_host_only() {
+            field += 1;
+        }
+        if self.docker_available && !self.selected_tool_host_only() {
+            field += 1;
+        }
+        field + 1
     }
 
     /// Validate an explicit structured-view choice at submit time (adapter
@@ -2227,6 +2296,10 @@ impl NewSessionDialog {
             fork_seed: self.fork_seed.clone(),
             issue_ref: self.issue_ref.clone(),
             inject_issue_context: self.issue_ref.as_ref().map(|_| true),
+            initial_prompt: {
+                let prompt = self.initial_prompt.lines().join("\n");
+                (!prompt.trim().is_empty()).then_some(prompt)
+            },
             structured: self.structured_enabled && self.structured_capable,
         })
     }

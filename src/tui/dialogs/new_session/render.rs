@@ -97,6 +97,7 @@ impl NewSessionDialog {
             constraints.push(Constraint::Length(2)); // Sandbox checkbox (summary only)
         }
         constraints.push(Constraint::Length(2)); // Group (always, at the bottom)
+        constraints.push(Constraint::Length(8)); // Editable multiline first prompt
 
         // For errors, calculate how many lines we need based on the text length.
         // Inner width = dialog_width - 2 (border) - 2 (margin) = 76.
@@ -182,6 +183,7 @@ impl NewSessionDialog {
             usize::MAX
         };
         let group_field = fi;
+        let issue_prompt_field = group_field + 1;
 
         // Profile picker (only when multiple profiles)
         if has_profile_selection {
@@ -440,6 +442,22 @@ impl NewSessionDialog {
             theme,
         );
         self.focusable_rects.push((group_field, area));
+        ci += 1;
+
+        let area = chunks[ci];
+        let prompt_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(if self.focused_field == issue_prompt_field {
+                Style::default().fg(theme.accent)
+            } else {
+                Style::default().fg(theme.border)
+            })
+            .title(" First prompt, Enter for newline ");
+        self.initial_prompt.set_block(prompt_block);
+        self.initial_prompt.set_style(Style::default().fg(theme.text));
+        frame.render_widget(&self.initial_prompt, area);
+        self.focusable_rects.push((issue_prompt_field, area));
         ci += 1;
 
         // Hints/errors (last chunk)

@@ -7505,6 +7505,7 @@ mod tests {
             fork_seed: None,
             issue_ref: None,
             inject_issue_context: None,
+            initial_prompt: None,
             structured: false,
         }
     }

@@ -22,6 +22,7 @@ use super::AppState;
 pub struct WorkItemsQuery {
     pub owner: String,
     pub repo: String,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,7 +151,21 @@ pub async fn list_work_items(
             .into_response();
     };
 
-    let work_items = project_work_items_with_attention(cache.issues, attachments);
+    let mut work_items = project_work_items_with_attention(cache.issues, attachments);
+    if let Some(path) = query.path.as_deref().filter(|path| !path.trim().is_empty()) {
+        let config = crate::session::repo_config::resolve_config_with_repo_or_warn(
+            &state.profile,
+            std::path::Path::new(path),
+        );
+        for item in work_items.open.iter_mut().chain(work_items.closed.iter_mut()) {
+            let prompt = crate::github::label_prompt_instructions(
+                &item.issue_ref,
+                Some(&item.issue),
+                &config.work_items.label_prompt_rules,
+            );
+            item.initial_prompt = (!prompt.trim().is_empty()).then_some(prompt);
+        }
+    }
 
     (
         StatusCode::OK,

@@ -4476,6 +4476,10 @@ pub struct CreateSessionBody {
     /// initial issue context prompt. Defaults on when `issue_ref` is set.
     #[serde(default)]
     pub inject_issue_context: Option<bool>,
+    /// Optional edited first prompt for an issue-backed structured session.
+    /// When present, this replaces the generated issue context prompt.
+    #[serde(default)]
+    pub initial_prompt: Option<String>,
     pub profile: Option<String>,
     /// How the new session should render: `structured` or `terminal`. The
     /// bundled wizard sends an explicit value (`structured` for ACP-capable
@@ -5139,19 +5143,36 @@ pub async fn create_session(
     let can_deliver_issue_context = body.view == crate::session::View::Structured;
     #[cfg(not(feature = "serve"))]
     let can_deliver_issue_context = false;
+    let has_explicit_initial_prompt = body
+        .initial_prompt
+        .as_deref()
+        .is_some_and(|prompt| !prompt.trim().is_empty());
     let pending_initial_turn =
-        if can_deliver_issue_context && body.inject_issue_context.unwrap_or(issue_ref.is_some()) {
-            let config = crate::session::repo_config::resolve_config_with_repo_or_warn(
-                &profile,
-                std::path::Path::new(&body.path),
-            );
-            issue_ref.as_ref().map(|issue_ref| {
-                crate::github::issue_context_prompt_with_rules(
-                    issue_ref,
-                    cached_issue_record.as_ref(),
-                    &config.work_items.label_prompt_rules,
-                )
-            })
+        if can_deliver_issue_context
+            && (!issue_ref.is_some() || body.inject_issue_context.unwrap_or(true))
+            && (has_explicit_initial_prompt
+                || body.inject_issue_context.unwrap_or(issue_ref.is_some()))
+        {
+            if let Some(prompt) = body
+                .initial_prompt
+                .as_deref()
+                .map(str::trim)
+                .filter(|prompt| !prompt.is_empty())
+            {
+                Some(prompt.to_string())
+            } else {
+                let config = crate::session::repo_config::resolve_config_with_repo_or_warn(
+                    &profile,
+                    std::path::Path::new(&body.path),
+                );
+                issue_ref.as_ref().map(|issue_ref| {
+                    crate::github::issue_context_prompt_with_rules(
+                        issue_ref,
+                        cached_issue_record.as_ref(),
+                        &config.work_items.label_prompt_rules,
+                    )
+                })
+            }
         } else {
             None
         };

@@ -39,7 +39,7 @@ export function WorkItemsPanel({
     if (!slug) return;
     const [owner, repo] = slug.split("/");
     if (!owner || !repo) return;
-    void fetchWorkItems(owner, repo).then((res) => {
+    void fetchWorkItems(owner, repo, selectedProject?.path).then((res) => {
       if (!active) return;
       setSnapshot({
         slug,

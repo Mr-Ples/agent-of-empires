@@ -4445,6 +4445,7 @@ impl HomeView {
             || self.search_active
             || self.new_dialog.is_some()
             || self.new_issue_dialog.is_some()
+            || self.issue_actions_dialog.is_some()
             || self.confirm_dialog.is_some()
             || self.unified_delete_dialog.is_some()
             || self.group_delete_options_dialog.is_some()
@@ -4511,6 +4512,7 @@ impl HomeView {
             || self.search_active
             || self.new_dialog.is_some()
             || self.new_issue_dialog.is_some()
+            || self.issue_actions_dialog.is_some()
             || self.confirm_dialog.is_some()
             || self.unified_delete_dialog.is_some()
             || self.group_delete_options_dialog.is_some()

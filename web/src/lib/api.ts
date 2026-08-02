@@ -40,8 +40,9 @@ export function fetchSessions(): Promise<SessionsEnvelope | null> {
   return fetchJson<SessionsEnvelope>("/api/sessions");
 }
 
-export function fetchWorkItems(owner: string, repo: string): Promise<WorkItemsResponse | null> {
+export function fetchWorkItems(owner: string, repo: string, path?: string): Promise<WorkItemsResponse | null> {
   const params = new URLSearchParams({ owner, repo });
+  if (path) params.set("path", path);
   return fetchJson<WorkItemsResponse>(`/api/work-items?${params.toString()}`);
 }
 

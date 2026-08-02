@@ -129,6 +129,41 @@ pattern = "\\benter submit\\b.*\\besc dismiss\\b"
 "opencode:opencode-submit-dismiss" = true
 ```
 
+### Label-based issue prompts
+
+Issue-backed structured sessions can receive a first prompt assembled from the
+cached GitHub issue. Add rules under `[work_items.label_prompt_rules]` in the
+global config, a profile config, or the repository's
+`.agent-of-empires/config.toml`:
+
+```toml
+[work_items.label_prompt_rules.ready_for_agent]
+labels = ["ready-for-agent", "bug"]
+instruction = "Use the implement skill to implement GitHub issue #{0}; use `gh issue view {issue_ref}` to get its details."
+
+[work_items.label_prompt_rules.documentation]
+labels = ["documentation"]
+instruction = "Update the relevant documentation and keep examples consistent with the implementation."
+```
+
+The rule key is an arbitrary stable id. Labels are matched case-insensitively;
+every matching rule contributes its instruction, in rule-id order. Global,
+profile, and repository rules merge by id, so a more specific config can
+replace a rule by reusing its id or add another rule without copying the
+others. Empty labels and instructions are ignored.
+
+Instructions support these placeholders: `{0}` and `{issue_number}` expand to
+the issue number, `{issue_ref}` expands to `owner/repo#number`, `{owner}` and
+`{repo}` expand to the repository parts, and `{title}` expands to the issue
+title. Unknown placeholders are left unchanged.
+
+When an issue is used to start a structured agent session, AoE sends the issue
+reference, title, labels, and body followed by the matching instructions as
+the agent's first prompt. The session wizard shows that generated first prompt
+in an editable field. Leaving it blank uses the generated prompt; entering
+text sends the edited text instead. This first-prompt delivery currently
+applies to structured/ACP sessions, where AoE owns the initial turn.
+
 | Option | Default | Description |
 |--------|---------|-------------|
 | `default_tool` | (auto-detect) | Default agent for new sessions. Falls back to the first available tool if unset or unavailable. Can be set to a custom agent name. |

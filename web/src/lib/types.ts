@@ -65,6 +65,8 @@ export interface WorkItemProjection {
   attached_session_id?: string | null;
   runtime_liveness?: RuntimeLiveness | null;
   attention_state?: AttentionState | null;
+  /** Server-generated editable first prompt for this issue. */
+  initial_prompt?: string | null;
   labels: IssueLabel[];
   url: string;
   pull_request: PullRequestBadge | null;
@@ -601,6 +603,8 @@ export interface CreateSessionRequest {
   /** When omitted, issue-created sessions inject cached issue context. Set
    *  false to keep the attachment without sending issue contents. */
   inject_issue_context?: boolean;
+  /** Optional edited first prompt for an issue-backed structured session. */
+  initial_prompt?: string;
   profile?: string;
   /** Substrate selection: true → ACP-based acp (Beta),
    *  false → tmux passthrough (legacy). Server defaults to true on

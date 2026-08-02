@@ -371,6 +371,10 @@ pub struct WorkItemProjection {
     pub runtime_liveness: Option<RuntimeLiveness>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attention_state: Option<AttentionState>,
+    /// Generated first prompt for the selected profile/repository, when the
+    /// work-items API was given a project path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_prompt: Option<String>,
     pub labels: Vec<IssueLabel>,
     pub url: String,
     pub pull_request: Option<PullRequestBadge>,
@@ -558,6 +562,7 @@ impl From<IssueRecord> for WorkItemProjection {
             attached_session_id: None,
             runtime_liveness: None,
             attention_state: None,
+            initial_prompt: None,
             labels: issue.labels.clone(),
             url: issue.url.clone(),
             pull_request: issue.pull_request.clone(),
@@ -654,6 +659,9 @@ pub fn issue_context_prompt(issue_ref: &IssueRef, issue: Option<&IssueRecord>) -
 ///
 /// The rules are expected in a `BTreeMap`, so their ids define deterministic
 /// output order. Empty instructions and labels never produce prompt content.
+/// Matching instructions support `{0}` as the issue number and the named
+/// placeholders `{issue_number}`, `{issue_ref}`, `{owner}`, `{repo}`, and
+/// `{title}`.
 pub fn issue_context_prompt_with_rules(
     issue_ref: &IssueRef,
     issue: Option<&IssueRecord>,
@@ -691,36 +699,64 @@ pub fn issue_context_prompt_with_rules(
         lines.push("Title: unavailable in local issue cache".to_string());
     }
 
-    if let Some(issue) = issue {
-        let issue_labels = issue
-            .labels
-            .iter()
-            .map(|label| label.name.trim().to_ascii_lowercase())
-            .collect::<HashSet<_>>();
-        let instructions = rules
-            .values()
-            .filter_map(|rule| {
-                let instruction = rule.instruction.trim();
-                let matches = rule
-                    .labels
-                    .iter()
-                    .map(|label| label.trim().to_ascii_lowercase())
-                    .any(|label| !label.is_empty() && issue_labels.contains(&label));
-                matches.then_some(instruction)
-            })
-            .filter(|instruction| !instruction.is_empty())
-            .collect::<Vec<_>>();
-        if !instructions.is_empty() {
+    let instructions = label_prompt_instructions(issue_ref, issue, rules);
+    if !instructions.is_empty() {
             lines.push(String::new());
             lines.push("Label Prompt Rules:".to_string());
-            for instruction in instructions {
+            for instruction in instructions.lines() {
                 lines.push(String::new());
                 lines.push(instruction.to_string());
             }
-        }
     }
 
     lines.join("\n")
+}
+
+/// Return only the configured instructions whose labels match the issue.
+/// This is the editable prompt shown before an issue-backed session starts.
+pub fn label_prompt_instructions(
+    issue_ref: &IssueRef,
+    issue: Option<&IssueRecord>,
+    rules: &BTreeMap<String, LabelPromptRule>,
+) -> String {
+    let Some(issue) = issue else {
+        return String::new();
+    };
+    let issue_labels = issue
+        .labels
+        .iter()
+        .map(|label| label.name.trim().to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    rules
+        .values()
+        .filter_map(|rule| {
+            let instruction = rule.instruction.trim();
+            let matches = rule
+                .labels
+                .iter()
+                .map(|label| label.trim().to_ascii_lowercase())
+                .any(|label| !label.is_empty() && issue_labels.contains(&label));
+            matches.then_some(expand_label_prompt_template(instruction, issue_ref, issue))
+        })
+        .filter(|instruction| !instruction.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Expand the small template language used by label prompt rules. Unknown
+/// placeholders remain unchanged so ordinary brace-delimited text is safe.
+fn expand_label_prompt_template(
+    template: &str,
+    issue_ref: &IssueRef,
+    issue: &IssueRecord,
+) -> String {
+    template
+        .replace("{0}", &issue_ref.number().to_string())
+        .replace("{issue_number}", &issue_ref.number().to_string())
+        .replace("{issue_ref}", &issue_ref.to_string())
+        .replace("{owner}", issue_ref.owner())
+        .replace("{repo}", issue_ref.repo())
+        .replace("{title}", issue.title.trim())
 }
 
 pub fn load_cached_issue_record(
@@ -1515,6 +1551,40 @@ mod tests {
         assert!(prompt.contains("Second instruction"));
         assert!(prompt.find("First instruction") < prompt.find("Second instruction"));
         assert!(!prompt.contains("Must not appear"));
+    }
+
+    #[test]
+    fn issue_context_prompt_expands_label_rule_templates() {
+        let record = GitHubIssuePayload {
+            number: 42,
+            title: "Ship it".to_string(),
+            labels: vec![GitHubIssueLabelPayload {
+                name: "ready-for-agent".to_string(),
+                color: None,
+                description: None,
+            }],
+            ..issue_payload()
+        }
+        .normalize(
+            "owner",
+            "repo",
+            IssueSyncMetadata::fresh(ts("2026-07-04T12:00:00Z")),
+        )
+        .unwrap();
+        let rules = BTreeMap::from([(
+            "implement".to_string(),
+            LabelPromptRule {
+                labels: vec!["ready-for-agent".to_string()],
+                instruction: "/implement issue #{0} ({issue_ref}): {title}; {owner}/{repo} #{issue_number}"
+                    .to_string(),
+            },
+        )]);
+
+        let prompt = issue_context_prompt_with_rules(&record.issue_ref, Some(&record), &rules);
+
+        assert!(prompt.contains(
+            "/implement issue #42 (owner/repo#42): Ship it; owner/repo #42"
+        ));
     }
 
     #[test]

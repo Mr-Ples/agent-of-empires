@@ -5514,6 +5514,7 @@ fn test_create_session_in_all_mode_is_findable() {
         fork_seed: None,
         issue_ref: None,
         inject_issue_context: None,
+        initial_prompt: None,
         structured: false,
     };
 
@@ -6825,6 +6826,7 @@ fn test_apply_creation_results_returns_session_id() {
         fork_seed: None,
         issue_ref: None,
         inject_issue_context: None,
+        initial_prompt: None,
         structured: false,
     };
 
@@ -10009,6 +10011,7 @@ fn issue_structured_create_sets_pending_issue_context_by_default() {
         fork_seed: None,
         issue_ref: Some(issue_ref),
         inject_issue_context: None,
+        initial_prompt: None,
         structured: true,
     };
 
@@ -10052,6 +10055,7 @@ fn issue_structured_create_can_disable_pending_issue_context() {
         fork_seed: None,
         issue_ref: Some("mr-ples/agent-of-empires#17".parse().unwrap()),
         inject_issue_context: Some(false),
+        initial_prompt: None,
         structured: true,
     };
 
@@ -15898,6 +15902,7 @@ mod post_create_attach_mode {
             fork_seed: None,
             issue_ref: None,
             inject_issue_context: None,
+            initial_prompt: None,
             structured: false,
         }
     }

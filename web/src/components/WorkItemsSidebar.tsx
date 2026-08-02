@@ -57,7 +57,7 @@ export function WorkItemsSidebar({
     const [owner, repo] = slug.split("/");
     if (!owner || !repo) return;
     const version = ++requestVersion.current;
-    void fetchWorkItems(owner, repo).then((res) => {
+    void fetchWorkItems(owner, repo, selectedProject?.path).then((res) => {
       if (version !== requestVersion.current) return;
       if (!res) {
         setLoadError(true);

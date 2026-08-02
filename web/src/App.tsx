@@ -1147,6 +1147,7 @@ function AppContent({
         group: latest?.group_path || undefined,
         issueRef: item.issue_ref,
         issueTitle: item.issue.title,
+        initialPrompt: item.initial_prompt || undefined,
         injectIssueContext: true,
       });
       setShowSessionWizard(true);

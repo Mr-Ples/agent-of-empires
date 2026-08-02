@@ -179,21 +179,38 @@ export function SessionStep({ data, onChange, embedded = false }: Props) {
         </div>
       )}
 
-      {typeof data.issueRef === "string" && data.issueRef.length > 0 && (
-        <label
-          className="flex items-center justify-between gap-3 p-3 bg-surface-900 border border-surface-700 rounded-lg mb-5 cursor-pointer"
-          onClick={(e) => {
-            if ((e.target as HTMLElement).closest('button[role="switch"]')) return;
-            onChange("injectIssueContext", !(data.injectIssueContext ?? true));
-          }}
-        >
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-text-primary">Issue Context</div>
-            <div className="text-xs text-text-dim mt-0.5 leading-snug font-mono truncate">{data.issueRef}</div>
-          </div>
-          <Toggle checked={data.injectIssueContext ?? true} onChange={(v) => onChange("injectIssueContext", v)} />
-        </label>
-      )}
+      <div className="space-y-3 mb-5">
+        {typeof data.issueRef === "string" && data.issueRef.length > 0 && (
+          <label
+            className="flex items-center justify-between gap-3 p-3 bg-surface-900 border border-surface-700 rounded-lg cursor-pointer"
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest('button[role="switch"]')) return;
+              onChange("injectIssueContext", !(data.injectIssueContext ?? true));
+            }}
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-text-primary">Issue Context</div>
+              <div className="text-xs text-text-dim mt-0.5 leading-snug font-mono truncate">{data.issueRef}</div>
+            </div>
+            <Toggle checked={data.injectIssueContext ?? true} onChange={(v) => onChange("injectIssueContext", v)} />
+          </label>
+        )}
+        {(!data.issueRef || (data.injectIssueContext ?? true)) && (
+          <label className="block text-sm text-text-dim">
+            First prompt sent to the agent
+            <textarea
+              value={data.initialPrompt}
+              onChange={(e) => onChange("initialPrompt", e.target.value)}
+              rows={6}
+              placeholder="Configured agent instructions, or generated issue context when an issue is attached."
+              className="mt-1 w-full resize-y rounded-lg border border-surface-700 bg-surface-900 px-3 py-2.5 text-sm font-mono text-text-primary placeholder:text-text-dim focus:border-brand-600 focus:outline-none"
+            />
+            <span className="mt-1 block text-xs text-text-dim">
+              In Issues view, the generated issue/label prompt takes precedence when available.
+            </span>
+          </label>
+        )}
+      </div>
 
       <div>
         <label className="block text-sm text-text-dim mb-1.5">Group</label>
