@@ -10,7 +10,7 @@ use super::HomeView;
 
 /// GitHub's issue list can briefly lag the response returned by a mutation.
 /// Give that list endpoint time to converge before reconciling the full cache.
-const ISSUE_MUTATION_SYNC_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+const ISSUE_MUTATION_SYNC_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(crate) fn issue_context_prompt_for_new_session(
     data: &NewSessionData,
@@ -203,11 +203,16 @@ impl HomeView {
             .selected_session
             .as_deref()
             .and_then(|id| self.get_instance(id))
-            .map(|instance| instance.project_path.clone())
+            .map(|instance| instance.repo_path().to_string())
             .or_else(|| {
                 std::env::current_dir()
                     .ok()
-                    .map(|path| path.to_string_lossy().into_owned())
+                    .map(|path| {
+                        crate::git::GitWorktree::find_main_repo(&path)
+                            .unwrap_or(path)
+                            .to_string_lossy()
+                            .into_owned()
+                    })
             });
         let Some(path) = path else {
             return;
@@ -309,7 +314,18 @@ impl HomeView {
         }) else {
             return;
         };
-        self.start_issue_sync_with_delay(project.path, repository, ISSUE_MUTATION_SYNC_DELAY);
+        if self.issue_sync_rx.is_some() {
+            self.pending_issue_sync = Some(super::PendingIssueSync {
+                project_path: project.path,
+                repository,
+            });
+            return;
+        }
+        self.start_issue_sync_with_delay(
+            project.path,
+            repository,
+            ISSUE_MUTATION_SYNC_DELAY,
+        );
     }
 
     fn start_issue_sync(
@@ -317,7 +333,11 @@ impl HomeView {
         project_path: String,
         repository: crate::github::IssueRepository,
     ) {
-        self.start_issue_sync_with_delay(project_path, repository, std::time::Duration::ZERO);
+        self.start_issue_sync_with_delay(
+            project_path,
+            repository,
+            std::time::Duration::ZERO,
+        );
     }
 
     fn start_issue_sync_with_delay(
@@ -405,12 +425,23 @@ impl HomeView {
             return false;
         };
         self.issue_sync_rx = None;
+        let pending = self.pending_issue_sync.take();
         if let Err(error) = result.result {
-            self.project_issue_states.insert(
-                result.project_path,
-                super::ProjectIssueReadState::LoadFailed(format!("issue sync failed: {error}")),
+            if pending.is_none() {
+                self.project_issue_states.insert(
+                    result.project_path,
+                    super::ProjectIssueReadState::LoadFailed(format!("issue sync failed: {error}")),
+                );
+                self.rebuild_flat_items();
+                return true;
+            }
+        }
+        if let Some(pending) = pending {
+            self.start_issue_sync_with_delay(
+                pending.project_path,
+                pending.repository,
+                ISSUE_MUTATION_SYNC_DELAY,
             );
-            self.rebuild_flat_items();
             return true;
         }
         self.refresh_project_work_items();

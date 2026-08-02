@@ -277,6 +277,11 @@ pub(super) struct IssueSyncResult {
     pub(super) result: anyhow::Result<()>,
 }
 
+pub(super) struct PendingIssueSync {
+    pub(super) project_path: String,
+    pub(super) repository: crate::github::IssueRepository,
+}
+
 /// View mode for the home screen
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ViewMode {
@@ -517,6 +522,7 @@ pub struct HomeView {
     pub(super) project_work_items: Vec<ProjectWorkItem>,
     pub(super) project_issue_states: HashMap<String, ProjectIssueReadState>,
     pub(super) issue_sync_rx: Option<std::sync::mpsc::Receiver<IssueSyncResult>>,
+    pub(super) pending_issue_sync: Option<PendingIssueSync>,
     pub(super) issues_closed_collapsed: bool,
 
     // Dialogs
@@ -2177,6 +2183,7 @@ impl HomeView {
             project_work_items: Vec::new(),
             project_issue_states: HashMap::new(),
             issue_sync_rx: None,
+            pending_issue_sync: None,
             issues_closed_collapsed: true,
             show_help: false,
             help_scroll: 0,
