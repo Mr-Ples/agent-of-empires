@@ -1,4 +1,4 @@
-//! Centered "[Yes]    [No]" button row used by destructive-confirm dialogs.
+//! Centered "[No]    [Yes]" button row used by destructive-confirm dialogs.
 //!
 //! Used by `confirm`, `delete_options`, and `update_confirm`. If a fourth
 //! caller needs a different button label set, generalize then.
@@ -9,13 +9,14 @@ use ratatui::widgets::Paragraph;
 use crate::tui::components::hover::paint_hover_bg;
 use crate::tui::styles::Theme;
 
-/// Width of the rendered "[Yes]    [No]" row: 5 (Yes) + 4 spaces + 4
-/// (No) = 13 cells. Kept as a constant so the click hit-test math
+/// Width of the rendered "[No]    [Yes]" row: 4 (No) + 4 spaces + 5
+/// (Yes) = 13 cells. Kept as a constant so the click hit-test math
 /// stays in lockstep with the renderer.
 const YES_NO_ROW_WIDTH: u16 = 13;
 
-/// Render a centered `[Yes]    [No]` row. Yes uses `theme.error`, No uses
-/// `theme.running`; the unfocused button uses `theme.dimmed`. When
+/// Render a centered `[No]    [Yes]` row. Yes uses `theme.error`, No uses
+/// `theme.running`; the unfocused button uses `theme.dimmed`. The affirmative
+/// action is on the right and focused by default. When
 /// `hovered` is one of the returned button rects, it gets a
 /// `theme.selection` background, the same highlight rows get elsewhere in
 /// the TUI; callers pass the rect a `HoverState` resolved from the last
@@ -42,9 +43,9 @@ pub fn render_yes_no(
         Style::default().fg(theme.running).bold()
     };
     let line = Line::from(vec![
-        Span::styled("[Yes]", yes_style),
-        Span::raw("    "),
         Span::styled("[No]", no_style),
+        Span::raw("    "),
+        Span::styled("[Yes]", yes_style),
     ]);
     frame.render_widget(Paragraph::new(line).alignment(Alignment::Center), area);
 
@@ -55,10 +56,10 @@ pub fn render_yes_no(
     // offset; mirror that here so the rects line up with the actual
     // glyphs, not just the row.
     let left_pad = (area.width - YES_NO_ROW_WIDTH) / 2;
-    let yes_x = area.x + left_pad;
-    let no_x = yes_x + 9; // "[Yes]" + 4 spaces
-    let yes_rect = Rect::new(yes_x, area.y, 5, 1);
+    let no_x = area.x + left_pad;
+    let yes_x = no_x + 8; // "[No]" + 4 spaces
     let no_rect = Rect::new(no_x, area.y, 4, 1);
+    let yes_rect = Rect::new(yes_x, area.y, 5, 1);
 
     if let Some(rect) = hovered.filter(|r| *r == yes_rect || *r == no_rect) {
         paint_hover_bg(frame, rect, theme.selection);

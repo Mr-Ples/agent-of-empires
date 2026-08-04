@@ -41,7 +41,7 @@ impl UpdateConfirmDialog {
             method,
             latest_version,
             needs_sudo,
-            selected: false,
+            selected: true,
             yes_button_area: Rect::default(),
             no_button_area: Rect::default(),
             hover: HoverState::default(),
@@ -79,11 +79,11 @@ impl UpdateConfirmDialog {
             }
             KeyCode::Char('y') | KeyCode::Char('Y') => DialogResult::Submit(()),
             KeyCode::Left | KeyCode::Char('h') => {
-                self.selected = true;
+                self.selected = false;
                 DialogResult::Continue
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                self.selected = false;
+                self.selected = true;
                 DialogResult::Continue
             }
             KeyCode::Tab => {
@@ -148,8 +148,8 @@ mod tests {
     }
 
     #[test]
-    fn default_selection_is_no() {
-        assert!(!dialog().selected);
+    fn default_selection_is_yes() {
+        assert!(dialog().selected);
     }
 
     #[test]
@@ -169,20 +169,20 @@ mod tests {
     }
 
     #[test]
-    fn enter_with_no_selected_cancels() {
+    fn enter_with_yes_selected_submits() {
         assert!(matches!(
             dialog().handle_key(k(KeyCode::Enter)),
-            DialogResult::Cancel
+            DialogResult::Submit(())
         ));
     }
 
     #[test]
-    fn enter_with_yes_selected_submits() {
+    fn enter_with_no_selected_cancels() {
         let mut d = dialog();
-        d.selected = true;
+        d.selected = false;
         assert!(matches!(
             d.handle_key(k(KeyCode::Enter)),
-            DialogResult::Submit(())
+            DialogResult::Cancel
         ));
     }
 }

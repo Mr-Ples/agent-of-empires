@@ -58,7 +58,7 @@ impl ProfilePickerDialog {
             selected,
             name_input: Input::default(),
             error: None,
-            confirm_selected: false,
+            confirm_selected: true,
         }
     }
 
@@ -117,7 +117,7 @@ impl ProfilePickerDialog {
             KeyCode::Char('d') => {
                 if self.can_delete_selected() {
                     self.mode = Mode::ConfirmDelete;
-                    self.confirm_selected = false;
+                    self.confirm_selected = true;
                 }
                 DialogResult::Continue
             }
@@ -175,11 +175,11 @@ impl ProfilePickerDialog {
                 DialogResult::Continue
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                self.confirm_selected = true;
+                self.confirm_selected = false;
                 DialogResult::Continue
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                self.confirm_selected = false;
+                self.confirm_selected = true;
                 DialogResult::Continue
             }
             KeyCode::Tab => {
@@ -439,9 +439,9 @@ impl ProfilePickerDialog {
 
         let buttons = Line::from(vec![
             Span::raw("  "),
-            Span::styled("[Yes]", yes_style),
-            Span::raw("    "),
             Span::styled("[No]", no_style),
+            Span::raw("    "),
+            Span::styled("[Yes]", yes_style),
         ]);
         frame.render_widget(
             Paragraph::new(buttons).alignment(Alignment::Center),

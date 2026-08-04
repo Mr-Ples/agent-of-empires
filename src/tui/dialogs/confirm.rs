@@ -43,7 +43,7 @@ impl ConfirmDialog {
             title: title.to_string(),
             message: message.to_string(),
             action: action.to_string(),
-            selected: false,
+            selected: true,
             tone: Tone::Destructive,
             dont_ask_again: None,
             yes_button_area: Rect::default(),
@@ -125,11 +125,11 @@ impl ConfirmDialog {
                 DialogResult::Continue
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                self.selected = true;
+                self.selected = false;
                 DialogResult::Continue
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                self.selected = false;
+                self.selected = true;
                 DialogResult::Continue
             }
             KeyCode::Tab => {
@@ -280,9 +280,9 @@ mod tests {
     }
 
     #[test]
-    fn test_default_selection_is_no() {
+    fn test_default_selection_is_yes() {
         let dialog = ConfirmDialog::new("Test", "Are you sure?", "test_action");
-        assert!(!dialog.selected);
+        assert!(dialog.selected);
     }
 
     #[test]
@@ -327,60 +327,60 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_with_no_selected_cancels() {
-        let mut dialog = ConfirmDialog::new("Test", "Message", "action");
-        let result = dialog.handle_key(key(KeyCode::Enter));
-        assert!(matches!(result, DialogResult::Cancel));
-    }
-
-    #[test]
     fn test_enter_with_yes_selected_submits() {
         let mut dialog = ConfirmDialog::new("Test", "Message", "action");
-        dialog.selected = true;
         let result = dialog.handle_key(key(KeyCode::Enter));
         assert!(matches!(result, DialogResult::Submit(())));
     }
 
     #[test]
+    fn test_enter_with_no_selected_cancels() {
+        let mut dialog = ConfirmDialog::new("Test", "Message", "action");
+        dialog.selected = false;
+        let result = dialog.handle_key(key(KeyCode::Enter));
+        assert!(matches!(result, DialogResult::Cancel));
+    }
+
+    #[test]
     fn test_tab_toggles_selection() {
         let mut dialog = ConfirmDialog::new("Test", "Message", "action");
-        assert!(!dialog.selected);
-
-        dialog.handle_key(key(KeyCode::Tab));
         assert!(dialog.selected);
 
         dialog.handle_key(key(KeyCode::Tab));
         assert!(!dialog.selected);
+
+        dialog.handle_key(key(KeyCode::Tab));
+        assert!(dialog.selected);
     }
 
     #[test]
-    fn test_left_selects_yes() {
+    fn test_left_selects_no() {
         let mut dialog = ConfirmDialog::new("Test", "Message", "action");
         dialog.handle_key(key(KeyCode::Left));
-        assert!(dialog.selected);
-    }
-
-    #[test]
-    fn test_right_selects_no() {
-        let mut dialog = ConfirmDialog::new("Test", "Message", "action");
-        dialog.selected = true;
-        dialog.handle_key(key(KeyCode::Right));
         assert!(!dialog.selected);
     }
 
     #[test]
-    fn test_h_selects_yes() {
+    fn test_right_selects_yes() {
+        let mut dialog = ConfirmDialog::new("Test", "Message", "action");
+        dialog.selected = false;
+        dialog.handle_key(key(KeyCode::Right));
+        assert!(dialog.selected);
+    }
+
+    #[test]
+    fn test_h_selects_no() {
         let mut dialog = ConfirmDialog::new("Test", "Message", "action");
         dialog.handle_key(key(KeyCode::Char('h')));
-        assert!(dialog.selected);
+        assert!(!dialog.selected);
     }
 
     #[test]
-    fn test_l_selects_no() {
+    fn test_l_selects_yes() {
         let mut dialog = ConfirmDialog::new("Test", "Message", "action");
-        dialog.selected = true;
+        dialog.selected = false;
         dialog.handle_key(key(KeyCode::Char('l')));
-        assert!(!dialog.selected);
+        assert!(dialog.selected);
     }
 
     #[test]

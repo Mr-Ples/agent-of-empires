@@ -93,15 +93,7 @@ impl UnifiedDeleteDialog {
             keep_scratch: false,
         };
 
-        let initial_focus = if config.worktree_branch.is_some() {
-            FocusElement::WorktreeCheckbox
-        } else if config.has_sandbox {
-            FocusElement::SandboxCheckbox
-        } else if config.is_scratch {
-            FocusElement::KeepScratchCheckbox
-        } else {
-            FocusElement::NoButton
-        };
+        let initial_focus = FocusElement::YesButton;
 
         let focusable_elements = Self::build_focusable_elements(&config, &options);
 
@@ -298,12 +290,12 @@ impl UnifiedDeleteDialog {
             }
 
             KeyCode::Left | KeyCode::Char('h') => {
-                self.focus = FocusElement::YesButton;
+                self.focus = FocusElement::NoButton;
                 DialogResult::Continue
             }
 
             KeyCode::Right | KeyCode::Char('l') => {
-                self.focus = FocusElement::NoButton;
+                self.focus = FocusElement::YesButton;
                 DialogResult::Continue
             }
 
@@ -614,15 +606,15 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_dialog_focuses_no_button() {
+    fn test_simple_dialog_focuses_yes_button() {
         let dialog = simple_dialog();
-        assert_eq!(dialog.focus, FocusElement::NoButton);
+        assert_eq!(dialog.focus, FocusElement::YesButton);
     }
 
     #[test]
-    fn test_full_dialog_focuses_first_checkbox() {
+    fn test_full_dialog_focuses_yes_button() {
         let dialog = full_dialog();
-        assert_eq!(dialog.focus, FocusElement::WorktreeCheckbox);
+        assert_eq!(dialog.focus, FocusElement::YesButton);
     }
 
     #[test]
@@ -645,6 +637,12 @@ mod tests {
     #[test]
     fn test_tab_cycles_through_elements() {
         let mut dialog = full_dialog();
+        assert_eq!(dialog.focus, FocusElement::YesButton);
+
+        dialog.handle_key(key(KeyCode::Tab));
+        assert_eq!(dialog.focus, FocusElement::NoButton);
+
+        dialog.handle_key(key(KeyCode::Tab));
         assert_eq!(dialog.focus, FocusElement::WorktreeCheckbox);
 
         dialog.handle_key(key(KeyCode::Tab));
@@ -658,12 +656,6 @@ mod tests {
 
         dialog.handle_key(key(KeyCode::Tab));
         assert_eq!(dialog.focus, FocusElement::YesButton);
-
-        dialog.handle_key(key(KeyCode::Tab));
-        assert_eq!(dialog.focus, FocusElement::NoButton);
-
-        dialog.handle_key(key(KeyCode::Tab));
-        assert_eq!(dialog.focus, FocusElement::WorktreeCheckbox);
     }
 
     #[test]
@@ -682,6 +674,7 @@ mod tests {
     #[test]
     fn test_space_toggles_checkbox() {
         let mut dialog = full_dialog();
+        dialog.focus = FocusElement::WorktreeCheckbox;
         let initial = dialog.options.delete_worktree;
 
         dialog.handle_key(key(KeyCode::Char(' ')));
@@ -713,33 +706,33 @@ mod tests {
     }
 
     #[test]
-    fn test_enter_on_no_cancels() {
-        let mut dialog = simple_dialog();
-        let result = dialog.handle_key(key(KeyCode::Enter));
-        assert!(matches!(result, DialogResult::Cancel));
-    }
-
-    #[test]
     fn test_enter_on_yes_submits() {
         let mut dialog = simple_dialog();
-        dialog.focus = FocusElement::YesButton;
         let result = dialog.handle_key(key(KeyCode::Enter));
         assert!(matches!(result, DialogResult::Submit(_)));
     }
 
     #[test]
-    fn test_left_focuses_yes() {
+    fn test_enter_on_no_cancels() {
         let mut dialog = simple_dialog();
-        dialog.handle_key(key(KeyCode::Left));
-        assert_eq!(dialog.focus, FocusElement::YesButton);
+        dialog.focus = FocusElement::NoButton;
+        let result = dialog.handle_key(key(KeyCode::Enter));
+        assert!(matches!(result, DialogResult::Cancel));
     }
 
     #[test]
-    fn test_right_focuses_no() {
+    fn test_left_focuses_no() {
         let mut dialog = simple_dialog();
-        dialog.focus = FocusElement::YesButton;
-        dialog.handle_key(key(KeyCode::Right));
+        dialog.handle_key(key(KeyCode::Left));
         assert_eq!(dialog.focus, FocusElement::NoButton);
+    }
+
+    #[test]
+    fn test_right_focuses_yes() {
+        let mut dialog = simple_dialog();
+        dialog.focus = FocusElement::NoButton;
+        dialog.handle_key(key(KeyCode::Right));
+        assert_eq!(dialog.focus, FocusElement::YesButton);
     }
 
     #[test]
@@ -756,42 +749,43 @@ mod tests {
         let mut dialog = simple_dialog();
         // Stage the button rects manually since the real coordinates
         // come from render(), which a unit test can't easily invoke.
-        dialog.yes_button_area = Rect::new(10, 8, 5, 1);
-        dialog.no_button_area = Rect::new(19, 8, 4, 1);
+        dialog.no_button_area = Rect::new(10, 8, 4, 1);
+        dialog.yes_button_area = Rect::new(18, 8, 5, 1);
 
-        let result = dialog.handle_click(12, 8).expect("yes hit");
+        let result = dialog.handle_click(20, 8).expect("yes hit");
         assert!(matches!(result, DialogResult::Submit(_)));
     }
 
     #[test]
     fn test_click_on_no_button_cancels() {
         let mut dialog = simple_dialog();
-        dialog.yes_button_area = Rect::new(10, 8, 5, 1);
-        dialog.no_button_area = Rect::new(19, 8, 4, 1);
+        dialog.no_button_area = Rect::new(10, 8, 4, 1);
+        dialog.yes_button_area = Rect::new(18, 8, 5, 1);
 
-        let result = dialog.handle_click(20, 8).expect("no hit");
+        let result = dialog.handle_click(12, 8).expect("no hit");
         assert!(matches!(result, DialogResult::Cancel));
     }
 
     #[test]
     fn test_click_between_buttons_misses() {
         let mut dialog = simple_dialog();
-        dialog.yes_button_area = Rect::new(10, 8, 5, 1);
-        dialog.no_button_area = Rect::new(19, 8, 4, 1);
-        // The four-space gap between "[Yes]" and "[No]" is dead space.
-        assert!(dialog.handle_click(16, 8).is_none());
+        dialog.no_button_area = Rect::new(10, 8, 4, 1);
+        dialog.yes_button_area = Rect::new(18, 8, 5, 1);
+        // The four-space gap between "[No]" and "[Yes]" is dead space.
+        assert!(dialog.handle_click(15, 8).is_none());
     }
 
     #[test]
     fn test_scratch_dialog_focuses_keep_scratch_checkbox() {
         let dialog = scratch_dialog();
-        assert_eq!(dialog.focus, FocusElement::KeepScratchCheckbox);
+        assert_eq!(dialog.focus, FocusElement::YesButton);
         assert!(!dialog.options.keep_scratch, "default must be off");
     }
 
     #[test]
     fn test_scratch_dialog_toggles_keep_scratch_on_space() {
         let mut dialog = scratch_dialog();
+        dialog.focus = FocusElement::KeepScratchCheckbox;
         dialog.handle_key(key(KeyCode::Char(' ')));
         assert!(dialog.options.keep_scratch);
         dialog.handle_key(key(KeyCode::Char(' ')));
@@ -821,8 +815,8 @@ mod tests {
     /// Stage button + checkbox rects manually (the real ones come from
     /// `render`, which is impractical to invoke in a unit test).
     fn stage_rects_for_simple(dialog: &mut UnifiedDeleteDialog) {
-        dialog.yes_button_area = Rect::new(10, 8, 5, 1);
-        dialog.no_button_area = Rect::new(19, 8, 4, 1);
+        dialog.no_button_area = Rect::new(10, 8, 4, 1);
+        dialog.yes_button_area = Rect::new(18, 8, 5, 1);
         // simple_dialog has no worktree/sandbox/scratch, so the only
         // focusable elements are the two buttons; no checkbox rects.
     }
@@ -843,8 +837,8 @@ mod tests {
         dialog
             .focusable_rects
             .push((FocusElement::SandboxCheckbox, Rect::new(5, 6, 30, 1)));
-        dialog.yes_button_area = Rect::new(10, 10, 5, 1);
-        dialog.no_button_area = Rect::new(19, 10, 4, 1);
+        dialog.no_button_area = Rect::new(10, 10, 4, 1);
+        dialog.yes_button_area = Rect::new(18, 10, 5, 1);
     }
 
     #[test]
@@ -860,17 +854,17 @@ mod tests {
         let no = dialog.no_button_area;
 
         // Over Yes: highlight Yes, focus stays put.
-        assert!(dialog.handle_hover(12, 8));
+        assert!(dialog.handle_hover(20, 8));
         assert_eq!(dialog.hover.current(), Some(yes));
         assert_eq!(dialog.focus, FocusElement::NoButton);
 
         // Over No: highlight follows, focus still unchanged.
-        assert!(dialog.handle_hover(20, 8));
+        assert!(dialog.handle_hover(12, 8));
         assert_eq!(dialog.hover.current(), Some(no));
         assert_eq!(dialog.focus, FocusElement::NoButton);
 
         // Same cell again: nothing changed, so no redraw is requested.
-        assert!(!dialog.handle_hover(20, 8));
+        assert!(!dialog.handle_hover(12, 8));
 
         // Off the buttons: highlight clears, focus unchanged.
         assert!(dialog.handle_hover(50, 50));
