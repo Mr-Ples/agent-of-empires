@@ -5085,11 +5085,33 @@ impl Instance {
             self.has_command_override()
         );
 
-        let detection_tool = if self.detect_as.is_empty() {
-            self.tool.clone()
+        // Older custom sessions predate command-based detector inference and
+        // therefore have an empty `detect_as`. Resolve their persisted launch
+        // command on every poll so custom aliases receive their matching
+        // registered-agent behavior without recreation.
+        // A configured mapping remains authoritative, including an empty or
+        // unknown value that deliberately retains the Idle fallback.
+        let profile = if self.source_profile.is_empty() {
+            crate::session::Config::load_or_warn().default_profile
         } else {
-            self.detect_as.clone()
+            self.source_profile.clone()
         };
+        let detection_config = crate::session::repo_config::resolve_config_with_repo_or_warn(
+            &profile,
+            Path::new(&self.project_path),
+        );
+        let inferred = || {
+            crate::agents::resolve_agent_behavior_name(&self.tool, None, Some(&self.command))
+        };
+        let detection_tool = match detection_config.session.agent_detect_as.get(&self.tool) {
+            Some(configured) => crate::agents::resolve_tool_name(configured),
+            None if !self.detect_as.trim().is_empty() => {
+                crate::agents::resolve_tool_name(&self.detect_as)
+            }
+            None => inferred(),
+        }
+        .unwrap_or(self.tool.as_str())
+        .to_string();
 
         if let Some(hook_status) = crate::hooks::read_hook_status(&self.id) {
             tracing::trace!(target: "session.store",

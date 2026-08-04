@@ -1741,7 +1741,52 @@ pub fn detect_kiro_status(_content: &str) -> Status {
     Status::Idle
 }
 
-pub fn detect_basic_agent_status(_content: &str) -> Status {
+/// Conservative pane fallback for registered agents without a bespoke parser.
+///
+/// It only promotes unambiguous signals shared by terminal agents. Everything
+/// else stays Idle, avoiding a false active state from ordinary scrollback.
+pub fn detect_basic_agent_status(raw_content: &str) -> Status {
+    let lines: Vec<&str> = raw_content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let recent = lines
+        .iter()
+        .rev()
+        .take(30)
+        .rev()
+        .copied()
+        .collect::<Vec<_>>();
+    let recent_lower = recent.join("\n").to_lowercase();
+
+    // Do not use the generic `approve` substring here. Several agents show
+    // persistent controls such as "Auto-approve" while a turn is running.
+    // These combinations describe an actual blocking prompt instead.
+    let has_yes_no_prompt = (recent_lower.contains("approve") || recent_lower.contains("allow"))
+        && recent_lower.contains("[y/n]");
+    if recent_lower.contains("permission request")
+        || recent_lower.contains("needs permission")
+        || recent_lower.contains("approve tool call")
+        || recent_lower.contains("is asking a question")
+        || recent_lower.contains("type a response")
+        || recent_lower.contains("run command?")
+        || has_yes_no_prompt
+    {
+        return Status::Waiting;
+    }
+
+    if recent_lower.contains("esc to interrupt")
+        || recent_lower.contains("esc interrupt")
+        || recent_lower.contains("ctrl+c to interrupt")
+        || recent_lower.contains("ctrl+c to stop")
+        || has_any_spinner(&recent)
+        || recent
+            .iter()
+            .any(|line| has_live_activity_word(&line.to_lowercase()))
+    {
+        return Status::Running;
+    }
+
     Status::Idle
 }
 
@@ -4464,7 +4509,23 @@ path: /workspace/secrets.env
     }
 
     #[test]
-    fn test_detect_basic_agent_status_is_stub() {
+    fn test_detect_basic_agent_status_is_idle_without_a_live_signal() {
         assert_eq!(detect_basic_agent_status("anything"), Status::Idle);
+    }
+
+    #[test]
+    fn test_detect_basic_agent_status_detects_shared_terminal_signals() {
+        assert_eq!(
+            detect_basic_agent_status("Auto-approve\nThinking through the task\nEsc to cancel"),
+            Status::Running
+        );
+        assert_eq!(
+            detect_basic_agent_status("Cline needs permission\nApprove tool call?\n[y] Approve\n[n] Deny"),
+            Status::Waiting
+        );
+        assert_eq!(
+            detect_basic_agent_status("Cline is asking a question\nType a response..."),
+            Status::Waiting
+        );
     }
 }

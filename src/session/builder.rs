@@ -702,12 +702,6 @@ pub fn build_instance(
     }
     instance.group_path = params.group;
     instance.tool = params.tool.clone();
-    instance.detect_as = config
-        .session
-        .agent_detect_as
-        .get(&params.tool)
-        .cloned()
-        .unwrap_or_default();
     instance.command = crate::agents::get_agent(&params.tool)
         .filter(|a| a.set_default_command)
         .map(|a| a.binary.to_string())
@@ -733,6 +727,24 @@ pub fn build_instance(
             params.tool
         );
     }
+    // An explicit mapping always wins, including an empty mapping that
+    // deliberately suppresses inference. Otherwise use the fully resolved
+    // command, so custom aliases inherit the matching registered-agent
+    // behavior without per-alias configuration.
+    instance.detect_as = config
+        .session
+        .agent_detect_as
+        .get(&params.tool)
+        .cloned()
+        .unwrap_or_else(|| {
+            crate::agents::resolve_agent_behavior_name(
+                &params.tool,
+                None,
+                Some(&instance.command),
+            )
+            .unwrap_or_default()
+            .to_string()
+        });
     if !params.extra_args.is_empty() {
         instance.extra_args = params.extra_args;
     } else if let Some(extra) = config.session.agent_extra_args.get(&params.tool) {
@@ -1982,7 +1994,7 @@ mod tests {
 
         assert_eq!(result.instance.tool, "remote-opencode");
         assert_eq!(result.instance.command, "ssh -t host opencode");
-        assert_eq!(result.instance.detect_as, "");
+        assert_eq!(result.instance.detect_as, "opencode");
     }
 
     #[test]
