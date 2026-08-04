@@ -7812,6 +7812,7 @@ fn pollable_instances_recovers_after_inflight_clear() {
 }
 
 /// Footer discoverability hints track where each key actually does something.
+/// `w` is always available outside strict mode to cycle attention, while
 /// Archive/Snooze are Attention-only. Fav follows its keybind's own gate
 /// (`Context::FavoritesUsable`): usable in Attention, or in any sort order
 /// while `favorites_first` is on. The underlying keybinds are unchanged; only
@@ -7849,11 +7850,15 @@ fn footer_hides_attention_workflow_hints_outside_attention_sort() {
         out
     };
 
-    // Newest sort with favorites-first OFF: no attention-workflow shortcuts,
-    // Fav excluded, because `f` is inert here.
+    // Newest sort with favorites-first OFF: `w` remains available to cycle
+    // attention, but Fav is excluded because `f` is inert here.
     crate::session::set_favorites_first(false);
     env.view.sort_order = SortOrder::Newest;
     let newest_off = render_footer(&mut env);
+    assert!(
+        newest_off.contains("Next wait/idle"),
+        "w attention-navigation hint should be visible outside Attention sort.\n{newest_off}"
+    );
     for hint in ["Snooze", "Fav", "Archive"] {
         assert!(
             !newest_off.contains(hint),

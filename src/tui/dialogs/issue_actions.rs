@@ -19,6 +19,7 @@ pub enum IssueAction {
     SetState(crate::github::IssueState),
     AttachSession(String),
     DetachSession,
+    LaunchLazygit,
 }
 
 pub struct IssueActionsDialog {
@@ -173,7 +174,7 @@ impl IssueActionsDialog {
 
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => self.menu_cursor = self.menu_cursor.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => self.menu_cursor = (self.menu_cursor + 1).min(3),
+            KeyCode::Down | KeyCode::Char('j') => self.menu_cursor = (self.menu_cursor + 1).min(4),
             KeyCode::Enter => match self.menu_cursor {
                 0 => self.editing = true,
                 1 => {
@@ -189,6 +190,9 @@ impl IssueActionsDialog {
                     }
                     self.session_picker = true;
                     self.session_cursor = 0;
+                }
+                3 if self.attached_session_id.is_some() => {
+                    return DialogResult::Submit(IssueAction::LaunchLazygit);
                 }
                 _ => return DialogResult::Cancel,
             },
@@ -221,7 +225,7 @@ impl IssueActionsDialog {
             self.render_session_picker(frame, area, theme);
             return;
         }
-        let dialog_area = super::centered_rect(area, 76, if self.editing { 20 } else { 12 });
+        let dialog_area = super::centered_rect(area, 76, if self.editing { 20 } else { 13 });
         frame.render_widget(Clear, dialog_area);
         let block = Block::default()
             .borders(Borders::ALL)
@@ -240,6 +244,7 @@ impl IssueActionsDialog {
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
+                Constraint::Length(1),
             ])
             .split(inner);
             frame.render_widget(Paragraph::new(format!("{}  {}", self.issue.issue_ref, self.issue.title)).style(Style::default().fg(theme.text)), rows[0]);
@@ -248,15 +253,16 @@ impl IssueActionsDialog {
             } else {
                 "Attach existing session"
             };
-            for (index, label) in [
+            let mut actions = vec![
                 "Edit issue",
                 if self.issue.state == crate::github::IssueState::Open { "Close issue" } else { "Reopen issue" },
                 attachment_label,
-                "Cancel",
-            ]
-            .iter()
-            .enumerate()
-            {
+            ];
+            if self.attached_session_id.is_some() {
+                actions.push("Launch lazygit");
+            }
+            actions.push("Cancel");
+            for (index, label) in actions.iter().enumerate() {
                 let style = if index == self.menu_cursor { Style::default().fg(theme.background).bg(theme.accent) } else { Style::default().fg(theme.text) };
                 frame.render_widget(Paragraph::new(format!("{} {}", if index == self.menu_cursor { ">" } else { " " }, label)).style(style), rows[index + 1]);
             }

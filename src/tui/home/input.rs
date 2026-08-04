@@ -1767,6 +1767,19 @@ impl HomeView {
                         IssueAction::DetachSession => Action::DetachSessionFromIssue {
                             session_id: attached_session_id.unwrap_or_default(),
                         },
+                        IssueAction::LaunchLazygit => {
+                            if attached_session_id.is_none() {
+                                return None;
+                            }
+                            if !self.tool_configs.contains_key("lazygit") {
+                                self.info_dialog = Some(InfoDialog::sized_to_fit(
+                                    "Lazygit unavailable",
+                                    "Configure [tools.lazygit] before launching it from an issue.",
+                                ));
+                                return None;
+                            }
+                            return self.open_lazygit_view();
+                        }
                     });
                 }
             }
@@ -2676,6 +2689,14 @@ impl HomeView {
                 self.flat_items.get(self.cursor),
                 Some(Item::WorkItem { item, .. }) if item.attached_session_id.is_none()
             ),
+            selected_issue_with_worktree: matches!(
+                self.flat_items.get(self.cursor),
+                Some(Item::WorkItem { item, .. })
+                    if item.attached_session_id.as_ref().is_some_and(|id| {
+                        self.get_instance(id)
+                            .is_some_and(|instance| instance.worktree_info.is_some())
+                    })
+            ),
             project_group_selected: self.project_group_at_cursor().is_some(),
         };
         match bindings::resolve_action(&key, self.strict_hotkeys, &ctx) {
@@ -2843,6 +2864,8 @@ impl HomeView {
             ActionId::NewIssue => self.open_new_issue_dialog(),
             ActionId::RefreshIssues => self.sync_issue_work_items(),
             ActionId::IssueActions => self.open_issue_actions_dialog(),
+            ActionId::CheckoutIssueWorktree => return self.checkout_selected_issue_worktree(),
+            ActionId::CheckoutIssueBaseBranch => return self.checkout_selected_issue_base_branch(),
             ActionId::NewFromSelection => self.open_new_from_selection(),
             ActionId::NewFromProject => self.open_project_session_picker(),
             ActionId::AttachTerminal => return self.attach_terminal_for_selected(),
@@ -2909,6 +2932,56 @@ impl HomeView {
             ActionId::AutoName => return self.auto_name_selected(),
         }
         None
+    }
+
+    fn checkout_selected_issue_worktree(&mut self) -> Option<Action> {
+        let id = self.selected_session.clone()?;
+        let instance = self.get_instance(&id)?;
+        let worktree = instance.worktree_info.as_ref()?;
+        Some(Action::CheckoutIssueBranch {
+            repo_path: worktree.main_repo_path.clone(),
+            branch: worktree.branch.clone(),
+        })
+    }
+
+    fn open_lazygit_view(&mut self) -> Option<Action> {
+        let Some(config) = self.tool_configs.get("lazygit") else {
+            self.info_dialog = Some(InfoDialog::sized_to_fit(
+                "Lazygit unavailable",
+                "Configure [tools.lazygit] before launching it from an issue.",
+            ));
+            return None;
+        };
+        if config.command.trim().is_empty() {
+            self.info_dialog = Some(InfoDialog::new(
+                "Tool command missing",
+                "Tool 'lazygit' has no command configured",
+            ));
+            return None;
+        }
+        self.view_mode = ViewMode::Tool("lazygit".to_string());
+        self.preview_scroll_offset = 0;
+        self.tool_preview_cache = super::PreviewCache::default();
+        self.maybe_auto_start_live_send()
+    }
+
+    fn checkout_selected_issue_base_branch(&mut self) -> Option<Action> {
+        let id = self.selected_session.clone()?;
+        let instance = self.get_instance(&id)?;
+        let Some(worktree) = &instance.worktree_info else {
+            return None;
+        };
+        let Some(base_branch) = worktree.base_branch.clone() else {
+            self.info_dialog = Some(InfoDialog::sized_to_fit(
+                "Base branch unavailable",
+                "This issue worktree has no recorded base branch.",
+            ));
+            return None;
+        };
+        Some(Action::CheckoutIssueBaseBranch {
+            repo_path: worktree.main_repo_path.clone(),
+            base_branch,
+        })
     }
 
     fn open_new_from_selection(&mut self) {

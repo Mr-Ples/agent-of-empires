@@ -39,6 +39,8 @@ pub enum ActionId {
     NewIssue,
     RefreshIssues,
     IssueActions,
+    CheckoutIssueWorktree,
+    CheckoutIssueBaseBranch,
     NewFromSelection,
     NewFromProject,
     AttachTerminal,
@@ -125,6 +127,8 @@ pub enum Context {
     Always,
     TerminalView,
     IssuesMode,
+    /// The cursor is on an issue with an attached AoE session.
+    IssueWorktreeAvailable,
     NewSessionAllowed,
     AttentionSort,
     /// Favorites are actionable: either the Attention sort is active, where
@@ -179,6 +183,7 @@ pub struct Ctx {
     pub sort_order: SortOrder,
     pub has_search: bool,
     pub selected_unattached_work_item: bool,
+    pub selected_issue_with_worktree: bool,
     /// True when the cursor sits on a real project header in project view, so
     /// the pin toggle can claim its chord ahead of the projects-dialog binding.
     pub project_group_selected: bool,
@@ -197,6 +202,7 @@ fn context_holds(context: Context, ctx: &Ctx) -> bool {
         Context::Always => true,
         Context::TerminalView => ctx.view_mode == ViewMode::Terminal,
         Context::IssuesMode => ctx.group_by == crate::session::config::GroupByMode::Issues,
+        Context::IssueWorktreeAvailable => ctx.selected_issue_with_worktree,
         Context::NewSessionAllowed => {
             ctx.group_by != crate::session::config::GroupByMode::Issues
                 || ctx.selected_unattached_work_item
@@ -540,6 +546,38 @@ pub static BINDINGS: &[Binding] = &[
                 "attach",
                 "detach",
             ],
+            group: PaletteGroup::Actions,
+            serve_only: false,
+        }),
+    },
+    Binding {
+        id: ActionId::CheckoutIssueWorktree,
+        non_strict: &[k('v')],
+        strict: &[k('V')],
+        context: Context::IssueWorktreeAvailable,
+        help: Some(HelpMeta {
+            section: HelpSection::Actions,
+            desc: "Check out issue worktree",
+        }),
+        palette: Some(PaletteMeta {
+            title: "Check out selected issue worktree",
+            keywords: &["issue", "worktree", "branch", "checkout"],
+            group: PaletteGroup::Actions,
+            serve_only: false,
+        }),
+    },
+    Binding {
+        id: ActionId::CheckoutIssueBaseBranch,
+        non_strict: &[k('V')],
+        strict: &[ctrl('v')],
+        context: Context::IssueWorktreeAvailable,
+        help: Some(HelpMeta {
+            section: HelpSection::Actions,
+            desc: "Check out issue base branch",
+        }),
+        palette: Some(PaletteMeta {
+            title: "Check out selected issue base branch",
+            keywords: &["issue", "worktree", "base", "branch", "checkout"],
             group: PaletteGroup::Actions,
             serve_only: false,
         }),
@@ -940,7 +978,7 @@ pub static BINDINGS: &[Binding] = &[
         context: Context::Always,
         help: Some(HelpMeta {
             section: HelpSection::Attention,
-            desc: "Jump to next waiting/idle",
+            desc: "Next attention, waiting then idle",
         }),
         palette: Some(PaletteMeta {
             title: "Jump to next waiting / idle session",
@@ -1026,6 +1064,8 @@ pub fn palette_id(id: ActionId) -> &'static str {
         ActionId::NewIssue => "new-issue",
         ActionId::RefreshIssues => "refresh-issues",
         ActionId::IssueActions => "issue-actions",
+        ActionId::CheckoutIssueWorktree => "checkout-issue-worktree",
+        ActionId::CheckoutIssueBaseBranch => "checkout-issue-base-branch",
         ActionId::NewFromSelection => "new-from-selection",
         ActionId::NewFromProject => "new-from-project",
         ActionId::AttachTerminal => "attach-terminal",
@@ -1076,6 +1116,7 @@ mod tests {
             sort_order: SortOrder::Newest,
             has_search: false,
             selected_unattached_work_item: false,
+            selected_issue_with_worktree: false,
             project_group_selected: false,
         }
     }
@@ -1323,6 +1364,24 @@ mod tests {
 
         c.selected_unattached_work_item = true;
         assert_eq!(resolve(&key('n'), false, &c), Some(ActionId::NewSession));
+    }
+
+    #[test]
+    fn issue_worktree_bindings_require_an_attached_worktree() {
+        let mut c = ctx();
+        c.group_by = crate::session::config::GroupByMode::Issues;
+        assert_eq!(resolve(&key('v'), false, &c), None);
+        assert_eq!(resolve(&key('V'), false, &c), None);
+
+        c.selected_issue_with_worktree = true;
+        assert_eq!(
+            resolve(&key('v'), false, &c),
+            Some(ActionId::CheckoutIssueWorktree)
+        );
+        assert_eq!(
+            resolve(&key('V'), false, &c),
+            Some(ActionId::CheckoutIssueBaseBranch)
+        );
     }
 
     #[test]

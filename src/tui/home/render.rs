@@ -3976,6 +3976,9 @@ impl HomeView {
         // Work Item. Other views keep the generic New-session hint.
         let new_uses_shift = committed_search && !strict;
         if self.group_by == crate::session::config::GroupByMode::Issues {
+            if !strict {
+                groups.push((1, kc('w'), mk("w", "Next attention")));
+            }
             groups.push((
                 1,
                 kc('N'),
@@ -3994,6 +3997,25 @@ impl HomeView {
                 ));
                 if matches!(
                     self.flat_items.get(self.cursor),
+                    Some(Item::WorkItem { item, .. })
+                        if item.attached_session_id.as_ref().is_some_and(|id| {
+                            self.get_instance(id)
+                                .is_some_and(|instance| instance.worktree_info.is_some())
+                        })
+                ) {
+                    groups.push((
+                        1,
+                        kc(if strict { 'V' } else { 'v' }),
+                        mk(if strict { "V" } else { "v" }, "Worktree"),
+                    ));
+                    groups.push((
+                        2,
+                        if strict { kctrl('v') } else { kc('V') },
+                        mk(if strict { "^V" } else { "V" }, "Base branch"),
+                    ));
+                }
+                if matches!(
+                    self.flat_items.get(self.cursor),
                     Some(Item::WorkItem { item, .. }) if item.attached_session_id.is_none()
                 ) {
                     groups.push((
@@ -4009,6 +4031,9 @@ impl HomeView {
                 kc(if strict || new_uses_shift { 'N' } else { 'n' }),
                 mk(if strict || new_uses_shift { "N" } else { "n" }, "New"),
             ));
+            if !strict {
+                groups.push((1, kc('w'), mk("w", "Next wait/idle")));
+            }
         }
 
         // Priority 1: user's core daily workflow (message / del).
