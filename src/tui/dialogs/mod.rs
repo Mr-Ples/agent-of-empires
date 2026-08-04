@@ -70,7 +70,7 @@ pub use snooze_duration::SnoozeDurationDialog;
 pub use sort_picker::SortPickerDialog;
 pub use telemetry_consent::TelemetryConsentDialog;
 pub use tips::{TipsDialog, TipsOutcome};
-pub use tool_picker::ToolPickerDialog;
+pub use tool_picker::{GLOBAL_LAZYGIT_TOOL, ToolPickerDialog};
 pub use update_confirm::UpdateConfirmDialog;
 pub use worktree_name::{WorktreeNameData, WorktreeNameDialog};
 

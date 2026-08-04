@@ -3707,6 +3707,9 @@ impl App {
                     }
                 }
             }
+            Action::LaunchGlobalLazygit(repo_path) => {
+                self.launch_global_lazygit(&repo_path, terminal)?;
+            }
             Action::SpawnImagePull(image) => {
                 if self.image_pull_rx.is_some() {
                     self.update_status = Some(UpdateStatus::transient(
@@ -4256,6 +4259,38 @@ impl App {
         Ok(())
     }
 
+    fn launch_global_lazygit(
+        &mut self,
+        repo_path: &str,
+        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    ) -> Result<()> {
+        let title = crate::session::projects::repo_label(repo_path);
+        let tool_session = crate::tmux::ToolSession::new("global-lazygit", &title, "lazygit");
+        if !tool_session.exists() || tool_session.is_pane_dead() {
+            if tool_session.exists() {
+                let _ = tool_session.kill();
+            }
+            tool_session.create_with_size(repo_path, "lazygit", crate::terminal::get_size())?;
+            tool_session.wait_until_ready()?;
+        }
+        crate::tmux::status_bar::apply_all_tmux_options(
+            tool_session.session_name(),
+            &format!("{} (lazygit)", title),
+            None,
+            None,
+        );
+        let attach_fn: Box<dyn FnOnce() -> Result<()>> = Box::new(move || tool_session.attach());
+        let (attach_result, attached_status_updates) =
+            self.with_attached_status_hooks(terminal, attach_fn)?;
+        self.needs_redraw = true;
+        self.home.reload()?;
+        self.home.apply_status_updates_without_hooks(attached_status_updates);
+        if let Err(error) = attach_result {
+            tracing::warn!("global lazygit attach returned error: {error}");
+        }
+        Ok(())
+    }
+
     fn run_background_tool_session(&mut self, session_id: &str, tool_name: &str) {
         let instance = match self.home.get_instance(session_id) {
             Some(inst) => inst.clone(),
@@ -4482,6 +4517,7 @@ pub enum Action {
         repo_path: String,
         base_branch: String,
     },
+    LaunchGlobalLazygit(String),
     /// Pull the sandbox image after the user accepts the "image update
     /// available" banner's confirm. Deferred to `execute_action` so the loop
     /// can show a "pulling…" status before the blocking pull starts.

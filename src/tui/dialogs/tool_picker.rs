@@ -8,6 +8,8 @@ use super::{centered_rect, DialogResult};
 use crate::session::config::ToolSessionConfig;
 use crate::tui::styles::Theme;
 
+pub const GLOBAL_LAZYGIT_TOOL: &str = "__global_lazygit";
+
 pub struct ToolPickerDialog {
     items: Vec<ToolPickerEntry>,
     cursor: usize,
@@ -33,6 +35,12 @@ impl ToolPickerDialog {
                 background: config.background,
             })
             .collect();
+        items.push(ToolPickerEntry {
+            name: "Lazygit (repository)".to_string(),
+            command: "lazygit".to_string(),
+            hotkey: String::new(),
+            background: false,
+        });
         items.sort_by(|a, b| a.name.cmp(&b.name));
         Self {
             items,
@@ -65,7 +73,7 @@ impl ToolPickerDialog {
             return DialogResult::Continue;
         };
         self.cursor = idx;
-        DialogResult::Submit(self.items[idx].name.clone())
+        DialogResult::Submit(self.entry_id(idx))
     }
 
     pub fn handle_hover(&mut self, col: u16, row: u16) -> bool {
@@ -83,8 +91,8 @@ impl ToolPickerDialog {
         match key.code {
             KeyCode::Esc | KeyCode::Char(';') => DialogResult::Cancel,
             KeyCode::Enter => {
-                if let Some(entry) = self.items.get(self.cursor) {
-                    DialogResult::Submit(entry.name.clone())
+                if self.items.get(self.cursor).is_some() {
+                    DialogResult::Submit(self.entry_id(self.cursor))
                 } else {
                     DialogResult::Cancel
                 }
@@ -110,6 +118,15 @@ impl ToolPickerDialog {
                 DialogResult::Continue
             }
             _ => DialogResult::Continue,
+        }
+    }
+
+    fn entry_id(&self, index: usize) -> String {
+        let entry = &self.items[index];
+        if entry.name == "Lazygit (repository)" {
+            GLOBAL_LAZYGIT_TOOL.to_string()
+        } else {
+            entry.name.clone()
         }
     }
 

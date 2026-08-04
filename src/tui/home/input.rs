@@ -530,6 +530,21 @@ impl HomeView {
         Some(Action::RunBackgroundToolSession(session_id, tool_name))
     }
 
+    fn activate_picked_tool(&mut self, tool_name: String) -> Option<Action> {
+        if tool_name == crate::tui::dialogs::GLOBAL_LAZYGIT_TOOL {
+            let repo_path = self
+                .active_issue_project()
+                .map(|project| project.path.clone())
+                .or_else(|| {
+                    std::env::current_dir()
+                        .ok()
+                        .map(|path| path.to_string_lossy().into_owned())
+                });
+            return repo_path.map(Action::LaunchGlobalLazygit);
+        }
+        self.activate_tool(tool_name, false)
+    }
+
     /// Check if the key event matches any configured tool session hotkey.
     /// On duplicate hotkeys, the alphabetically-first tool name wins
     /// (the cache is built sorted by tool name).
@@ -1495,7 +1510,7 @@ impl HomeView {
                 }
                 DialogResult::Submit(tool_name) => {
                     self.tool_picker_dialog = None;
-                    self.pending_dialog_click_action = self.activate_tool(tool_name, false);
+                    self.pending_dialog_click_action = self.activate_picked_tool(tool_name);
                 }
             }
             return true;
@@ -1767,19 +1782,6 @@ impl HomeView {
                         IssueAction::DetachSession => Action::DetachSessionFromIssue {
                             session_id: attached_session_id.unwrap_or_default(),
                         },
-                        IssueAction::LaunchLazygit => {
-                            if attached_session_id.is_none() {
-                                return None;
-                            }
-                            if !self.tool_configs.contains_key("lazygit") {
-                                self.info_dialog = Some(InfoDialog::sized_to_fit(
-                                    "Lazygit unavailable",
-                                    "Configure [tools.lazygit] before launching it from an issue.",
-                                ));
-                                return None;
-                            }
-                            return self.open_lazygit_view();
-                        }
                     });
                 }
             }
@@ -2028,7 +2030,7 @@ impl HomeView {
                 }
                 DialogResult::Submit(tool_name) => {
                     self.tool_picker_dialog = None;
-                    return self.activate_tool(tool_name, false);
+                    return self.activate_picked_tool(tool_name);
                 }
             }
         }
@@ -2839,7 +2841,7 @@ impl HomeView {
             ActionId::ToolPicker => {
                 if matches!(self.view_mode, ViewMode::Tool(_)) {
                     self.view_mode = ViewMode::Structured;
-                } else if !self.tool_configs.is_empty() {
+                } else {
                     self.open_tool_picker();
                 }
             }
@@ -2942,27 +2944,6 @@ impl HomeView {
             repo_path: worktree.main_repo_path.clone(),
             branch: worktree.branch.clone(),
         })
-    }
-
-    fn open_lazygit_view(&mut self) -> Option<Action> {
-        let Some(config) = self.tool_configs.get("lazygit") else {
-            self.info_dialog = Some(InfoDialog::sized_to_fit(
-                "Lazygit unavailable",
-                "Configure [tools.lazygit] before launching it from an issue.",
-            ));
-            return None;
-        };
-        if config.command.trim().is_empty() {
-            self.info_dialog = Some(InfoDialog::new(
-                "Tool command missing",
-                "Tool 'lazygit' has no command configured",
-            ));
-            return None;
-        }
-        self.view_mode = ViewMode::Tool("lazygit".to_string());
-        self.preview_scroll_offset = 0;
-        self.tool_preview_cache = super::PreviewCache::default();
-        self.maybe_auto_start_live_send()
     }
 
     fn checkout_selected_issue_base_branch(&mut self) -> Option<Action> {

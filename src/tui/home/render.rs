@@ -3947,7 +3947,7 @@ impl HomeView {
         ));
         if matches!(self.view_mode, ViewMode::Tool(_)) {
             groups.push((1, kc(';'), mk(";", "Back")));
-        } else if !self.tool_configs.is_empty() {
+        } else {
             groups.push((2, kc(';'), mk(";", "Tools")));
         }
         groups.push((
