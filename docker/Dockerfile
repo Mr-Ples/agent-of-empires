@@ -1,5 +1,5 @@
 # aoe-sandbox: Docker image for Agent of Empires sandbox sessions
-# This image provides Claude Code, OpenCode, Mistral Vibe, Hermes, Codex CLI, Gemini CLI, Antigravity CLI, Cursor CLI, Copilot CLI, Pi, OMP, Kiro CLI, and Qwen Code in an isolated environment
+# This image provides Claude Code, OpenCode, Mistral Vibe, Hermes, Codex CLI, Gemini CLI, Antigravity CLI, Cursor CLI, Copilot CLI, Pi, OMP, Kiro CLI, Qwen Code, Kimi Code, Kilo Code, Cline CLI, and Freebuff in an isolated environment
 
 FROM ubuntu:26.04
 
@@ -16,6 +16,18 @@ RUN apt-get update && apt-get install -y \
     ripgrep \
     fzf \
     unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install GitHub CLI. Issue-backed first prompts commonly ask agents to inspect
+# issues with `gh issue view`, so the base sandbox needs `gh`, not only the dev
+# sandbox.
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js (required for Codex CLI)
@@ -80,6 +92,20 @@ RUN npm install -g @qwen-code/qwen-code
 # config over /root/.kimi-code, which would otherwise shadow the binary.
 RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh \
     | KIMI_INSTALL_DIR=/usr/local KIMI_NO_MODIFY_PATH=1 bash
+
+# Install Kilo Code, Cline CLI, and Freebuff
+RUN npm install -g \
+    @kilocode/cli \
+    cline \
+    freebuff \
+    && command -v kilo \
+    && command -v cline \
+    && command -v freebuff \
+    && mkdir -p \
+    /root/.config/kilo \
+    /root/.cline \
+    /root/.config/manicode \
+    /root/.freebuff
 
 # Install ACP adapters used by `aoe`'s structured view mode when the session is
 # sandboxed. The structured view runner `docker exec`s these by their bare binary

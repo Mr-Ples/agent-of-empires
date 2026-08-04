@@ -80,6 +80,29 @@ fn matches_input_prompt(non_empty_lines: &[&str], take_n: usize, tool_prompts: &
     false
 }
 
+pub fn agent_input_prompt_visible(raw_content: &str, tool: &str) -> Option<bool> {
+    let clean = strip_ansi(raw_content);
+    let lower = clean.to_lowercase();
+    let non_empty_lines: Vec<&str> = lower.lines().filter(|l| !l.trim().is_empty()).collect();
+
+    let visible = match tool {
+        "opencode" => matches_input_prompt(&non_empty_lines, 10, &[">>"]),
+        "kilo" => lower.contains("ask anything"),
+        "pi" => matches_input_prompt(&non_empty_lines, 5, &["pi>"]),
+        "hermes" => non_empty_lines.iter().rev().take(5).any(|line| {
+            let clean_line = line.trim();
+            !clean_line.contains("ctrl+c to interrupt")
+                && (clean_line == "\u{276f}"
+                    || clean_line.starts_with("\u{276f} ")
+                    || clean_line == "\u{26a1}"
+                    || clean_line.starts_with("\u{26a1} "))
+        }),
+        _ => return None,
+    };
+
+    Some(visible)
+}
+
 pub fn detect_status_from_content(content: &str, tool: &str) -> Status {
     // Strip ANSI escape codes before passing to detectors. capture-pane is
     // called with -e (to preserve colors for the TUI preview), but color codes
@@ -1718,6 +1741,10 @@ pub fn detect_kiro_status(_content: &str) -> Status {
     Status::Idle
 }
 
+pub fn detect_basic_agent_status(_content: &str) -> Status {
+    Status::Idle
+}
+
 /// settl status is detected via hooks (TOML-based), not tmux pane parsing.
 /// This stub exists so the agent registry has a valid function pointer.
 pub fn detect_settl_status(_content: &str) -> Status {
@@ -3080,6 +3107,27 @@ Do you want to proceed?\n\
     }
 
     #[test]
+    fn test_opencode_input_prompt_visible() {
+        assert_eq!(agent_input_prompt_visible("Ready\n>>", "opencode"), Some(true));
+        assert_eq!(
+            agent_input_prompt_visible("Generating\nesc to interrupt", "opencode"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_kilo_input_prompt_visible() {
+        assert_eq!(
+            agent_input_prompt_visible("Kilo Code\nAsk anything...", "kilo"),
+            Some(true)
+        );
+        assert_eq!(
+            agent_input_prompt_visible("Starting Kilo Code...", "kilo"),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn test_detect_vibe_status_running() {
         // Braille spinners
         assert_eq!(detect_vibe_status("processing ⠋"), Status::Running);
@@ -4023,6 +4071,15 @@ run this command? (y/n)
     }
 
     #[test]
+    fn test_pi_input_prompt_visible() {
+        assert_eq!(agent_input_prompt_visible("complete\npi>", "pi"), Some(true));
+        assert_eq!(
+            agent_input_prompt_visible("processing request\nesc to interrupt", "pi"),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn test_detect_pi_status_idle() {
         assert_eq!(detect_pi_status("file saved"), Status::Idle);
         assert_eq!(detect_pi_status("random output text"), Status::Idle);
@@ -4189,6 +4246,18 @@ run this command? (y/n)
         assert_eq!(detect_hermes_status("some output\n❯"), Status::Idle);
         assert_eq!(detect_hermes_status("some output\n❯ "), Status::Idle);
         assert_eq!(detect_hermes_status("some output\n⚡"), Status::Idle);
+    }
+
+    #[test]
+    fn test_hermes_input_prompt_visible() {
+        assert_eq!(
+            agent_input_prompt_visible("some output\n\u{276f}", "hermes"),
+            Some(true)
+        );
+        assert_eq!(
+            agent_input_prompt_visible("some output\n\u{276f} Ctrl+C to interrupt...", "hermes"),
+            Some(false)
+        );
     }
 
     #[test]
@@ -4392,5 +4461,10 @@ path: /workspace/secrets.env
     fn test_detect_kiro_status_is_stub() {
         // Kiro CLI uses hook-based detection; the stub always returns Idle
         assert_eq!(detect_kiro_status("anything"), Status::Idle);
+    }
+
+    #[test]
+    fn test_detect_basic_agent_status_is_stub() {
+        assert_eq!(detect_basic_agent_status("anything"), Status::Idle);
     }
 }

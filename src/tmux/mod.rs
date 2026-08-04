@@ -14,7 +14,7 @@ pub(crate) mod vt;
 
 pub use session::{PaneCursor, Session, SIZE_OWNER_HEARTBEAT, SIZE_OWNER_TTL};
 pub use status_bar::{get_session_info_for_current, get_status_for_current_session};
-pub use status_detection::detect_status_from_content;
+pub use status_detection::{agent_input_prompt_visible, detect_status_from_content};
 pub(crate) use status_detection::{
     claude_pane_is_ambiguous_typed_prompt, reconcile_claude_hook_status,
     reconcile_codex_hook_status, reconcile_waiting_hook,

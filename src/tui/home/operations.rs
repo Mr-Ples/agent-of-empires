@@ -16,6 +16,15 @@ pub(crate) fn issue_context_prompt_for_new_session(
     data: &NewSessionData,
     structured: bool,
 ) -> Option<String> {
+    if let Some(prompt) = data
+        .initial_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|prompt| !prompt.is_empty())
+    {
+        return Some(prompt.to_string());
+    }
+
     #[cfg(not(feature = "serve"))]
     {
         let _ = data;
@@ -34,14 +43,6 @@ pub(crate) fn issue_context_prompt_for_new_session(
             && !data.inject_issue_context.unwrap_or(true)
         {
             return None;
-        }
-        if let Some(prompt) = data
-            .initial_prompt
-            .as_deref()
-            .map(str::trim)
-            .filter(|prompt| !prompt.is_empty())
-        {
-            return Some(prompt.to_string());
         }
         let issue_ref = data.issue_ref.as_ref()?;
         let cached_issue_record = crate::session::get_app_dir()

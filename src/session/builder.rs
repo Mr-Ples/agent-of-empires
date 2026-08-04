@@ -496,17 +496,12 @@ pub fn build_instance(
         &final_title,
     );
 
-    let effective_worktree_branch: Option<String> = match branch_source {
-        None => None,
-        Some(BranchSource::Explicit(name)) => Some(name),
-        Some(BranchSource::Derived(name)) => {
-            if params.create_new_branch {
-                Some(dedupe_branch_name(&name, &taken_branches))
-            } else {
-                Some(name)
-            }
-        }
-    };
+    let effective_worktree_branch = resolve_effective_worktree_branch(
+        branch_source,
+        params.create_new_branch,
+        params.issue_ref.is_some(),
+        &taken_branches,
+    );
 
     if let Some(branch) = &effective_worktree_branch {
         if !params.extra_repo_paths.is_empty() {
@@ -1069,6 +1064,35 @@ pub(crate) enum BranchSource {
     Derived(String),
 }
 
+fn resolve_effective_worktree_branch(
+    source: Option<BranchSource>,
+    create_new_branch: bool,
+    issue_backed: bool,
+    taken_branches: &HashSet<String>,
+) -> Option<String> {
+    match source {
+        None => None,
+        Some(BranchSource::Explicit(name)) => {
+            // Issue sessions display a pre-filled branch name, but it is
+            // still derived from the issue. A follow-up session for the same
+            // issue must get a fresh branch when the previous session kept
+            // its worktree after being stopped and detached.
+            if create_new_branch && issue_backed {
+                Some(dedupe_branch_name(&name, taken_branches))
+            } else {
+                Some(name)
+            }
+        }
+        Some(BranchSource::Derived(name)) => {
+            if create_new_branch {
+                Some(dedupe_branch_name(&name, taken_branches))
+            } else {
+                Some(name)
+            }
+        }
+    }
+}
+
 fn resolve_worktree_branch(
     worktree_enabled: bool,
     worktree_branch: Option<&str>,
@@ -1388,6 +1412,28 @@ mod tests {
         // namespace separator, so `feat/auth` survives unchanged.
         let branch = resolve_worktree_branch(true, Some("feat/auth"), "Fix Login Flow").unwrap();
         assert!(matches!(branch, BranchSource::Explicit(ref s) if s == "feat/auth"));
+    }
+
+    #[test]
+    fn issue_backed_explicit_branch_is_deduped_for_follow_up_sessions() {
+        let source = Some(BranchSource::Explicit("17-fix-login".to_string()));
+        let taken = HashSet::from(["17-fix-login".to_string()]);
+
+        assert_eq!(
+            resolve_effective_worktree_branch(source, true, true, &taken),
+            Some("17-fix-login-2".to_string())
+        );
+    }
+
+    #[test]
+    fn manual_explicit_branch_conflicts_remain_errors() {
+        let source = Some(BranchSource::Explicit("feat/auth".to_string()));
+        let taken = HashSet::from(["feat/auth".to_string()]);
+
+        assert_eq!(
+            resolve_effective_worktree_branch(source, true, false, &taken),
+            Some("feat/auth".to_string())
+        );
     }
 
     #[test]

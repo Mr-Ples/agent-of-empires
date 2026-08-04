@@ -303,6 +303,54 @@ const AGENT_CONFIG_MOUNTS: &[AgentConfigMount] = &[
         preserve_files: &[],
         clean_files: &[],
     },
+    AgentConfigMount {
+        tool_name: "kilo",
+        host_rel: ".config/kilo",
+        container_suffix: ".config/kilo",
+        skip_entries: &["sandbox", "sessions", "logs", "cache", "kilo.jsonc"],
+        seed_files: &[],
+        copy_dirs: &["agent", "command", "skill", "skills"],
+        keychain_credential: None,
+        home_seed_files: &[],
+        preserve_files: &[],
+        clean_files: &[],
+    },
+    AgentConfigMount {
+        tool_name: "cline",
+        host_rel: ".cline",
+        container_suffix: ".cline",
+        skip_entries: &["sandbox", "sessions", "logs"],
+        seed_files: &[],
+        copy_dirs: &["data", "hooks", "plugins", "rules", "skills"],
+        keychain_credential: None,
+        home_seed_files: &[],
+        preserve_files: &[],
+        clean_files: &[],
+    },
+    AgentConfigMount {
+        tool_name: "freebuff",
+        host_rel: ".config/manicode",
+        container_suffix: ".config/manicode",
+        skip_entries: &["sandbox"],
+        seed_files: &[],
+        copy_dirs: &[],
+        keychain_credential: None,
+        home_seed_files: &[],
+        preserve_files: &[],
+        clean_files: &[],
+    },
+    AgentConfigMount {
+        tool_name: "freebuff",
+        host_rel: ".freebuff",
+        container_suffix: ".freebuff",
+        skip_entries: &["sandbox"],
+        seed_files: &[],
+        copy_dirs: &[],
+        keychain_credential: None,
+        home_seed_files: &[],
+        preserve_files: &[],
+        clean_files: &[],
+    },
 ];
 
 /// Sync host agent config into the shared sandbox directory. Copies top-level files
@@ -1144,18 +1192,12 @@ fn resolve_active_agent(
     detect_as: Option<&str>,
     session_config: &super::config::SessionConfig,
 ) -> Option<&'static crate::agents::AgentDef> {
-    crate::agents::get_agent(tool)
-        .or_else(|| {
-            detect_as
-                .filter(|name| !name.is_empty())
-                .and_then(crate::agents::get_agent)
-        })
-        .or_else(|| {
-            session_config
-                .agent_detect_as
-                .get(tool)
-                .and_then(|detect_as| crate::agents::get_agent(detect_as))
-        })
+    let configured_detect_as = detect_as
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| session_config.agent_detect_as.get(tool).map(String::as_str));
+    let configured_command = session_config.resolve_tool_command(tool);
+    let command = (!configured_command.trim().is_empty()).then_some(configured_command.as_str());
+    crate::agents::resolve_agent_def_for_tool(tool, configured_detect_as, command)
 }
 
 fn agent_config_container_path(
@@ -1562,6 +1604,17 @@ pub(crate) fn build_container_config(
                     read_only: false,
                 });
             }
+        }
+    }
+
+    if config_tool == "kilo" {
+        let kilo_config = home.join(".config/kilo/kilo.jsonc");
+        if kilo_config.exists() {
+            volumes.push(VolumeMount {
+                host_path: kilo_config.to_string_lossy().to_string(),
+                container_path: format!("{}/.config/kilo/kilo.jsonc", CONTAINER_HOME),
+                read_only: true,
+            });
         }
     }
 
@@ -2595,8 +2648,13 @@ mod tests {
         let tool_names: Vec<&str> = AGENT_CONFIG_MOUNTS.iter().map(|m| m.tool_name).collect();
         for name in &tool_names {
             let count = tool_names.iter().filter(|n| *n == name).count();
-            // OpenCode has two mounts: data dir (.local/share/opencode) + config dir (.config/opencode)
-            let expected = if *name == "opencode" { 2 } else { 1 };
+            let expected = match *name {
+                // OpenCode has a data dir plus a config dir.
+                "opencode" => 2,
+                // Freebuff may use the shared Manicode path or its own config dir.
+                "freebuff" => 2,
+                _ => 1,
+            };
             assert_eq!(
                 count, expected,
                 "tool_name '{}' appears {} times, expected {}",
@@ -5074,6 +5132,56 @@ volume_ignores = ["target"]
         );
 
         std::env::remove_var("CLAUDE_CODE_USE_VERTEX");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_kilo_mounts_live_jsonc_read_only() {
+        let temp_home = TempDir::new().unwrap();
+        std::env::set_var("HOME", temp_home.path());
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        std::env::set_var("XDG_CONFIG_HOME", temp_home.path().join(".config"));
+        let kilo_dir = temp_home.path().join(".config").join("kilo");
+        fs::create_dir_all(&kilo_dir).unwrap();
+        let kilo_jsonc = kilo_dir.join("kilo.jsonc");
+        fs::write(&kilo_jsonc, "{}").unwrap();
+
+        let project_dir = TempDir::new().unwrap();
+        let config = run_build_for_vertex_test("kilo", project_dir.path());
+
+        let target = "/root/.config/kilo/kilo.jsonc";
+        let mount = config
+            .volumes
+            .iter()
+            .find(|v| v.container_path == target)
+            .expect("expected Kilo jsonc mount");
+        assert_eq!(mount.host_path, kilo_jsonc.to_string_lossy());
+        assert!(mount.read_only);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_kilo_custom_tool_mounts_live_jsonc_read_only() {
+        let temp_home = TempDir::new().unwrap();
+        std::env::set_var("HOME", temp_home.path());
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        std::env::set_var("XDG_CONFIG_HOME", temp_home.path().join(".config"));
+        let kilo_dir = temp_home.path().join(".config").join("kilo");
+        fs::create_dir_all(&kilo_dir).unwrap();
+        let kilo_jsonc = kilo_dir.join("kilo.jsonc");
+        fs::write(&kilo_jsonc, "{}").unwrap();
+
+        let project_dir = TempDir::new().unwrap();
+        let config = run_build_for_vertex_test("kilo-orcarouter", project_dir.path());
+
+        let target = "/root/.config/kilo/kilo.jsonc";
+        let mount = config
+            .volumes
+            .iter()
+            .find(|v| v.container_path == target)
+            .expect("expected Kilo jsonc mount for custom tool name");
+        assert_eq!(mount.host_path, kilo_jsonc.to_string_lossy());
+        assert!(mount.read_only);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Docker sandboxing runs your AI coding agents (Claude Code, OpenCode, Mistral Vibe, Hermes, Codex CLI, Gemini CLI, Antigravity CLI, Cursor CLI, Copilot CLI, Pi, Oh My Pi (OMP), Kiro CLI, Qwen Code, Kimi Code) inside isolated Docker containers while maintaining access to your project files and credentials.
+Docker sandboxing runs your AI coding agents (Claude Code, OpenCode, Mistral Vibe, Hermes, Codex CLI, Gemini CLI, Antigravity CLI, Cursor CLI, Copilot CLI, Pi, Oh My Pi (OMP), Kiro CLI, Qwen Code, Kimi Code, Kilo Code, Cline CLI, Freebuff) inside isolated Docker containers while maintaining access to your project files and credentials.
 
 > **Linux users:** AoE also supports [Podman](podman.md) as a daemonless, rootless-friendly alternative to Docker.
 >
@@ -115,6 +115,10 @@ volume_ignores_strategy = "named"
 | `~/.gitconfig` | `/root/.gitconfig` | RO | Git config |
 | `~/.ssh/` | `/root/.ssh/` | RO | SSH keys |
 | `~/.config/opencode/` | `/root/.config/opencode/` | RO | OpenCode config |
+| `~/.config/kilo/` | `/root/.config/kilo/` | RO | Kilo Code config |
+| `~/.cline/` | `/root/.cline/` | RO | Cline CLI config |
+| `~/.config/manicode/` | `/root/.config/manicode/` | RO | Freebuff config |
+| `~/.freebuff/` | `/root/.freebuff/` | RO | Freebuff config |
 
 ## Environment Variables
 
@@ -150,7 +154,7 @@ AOE provides two official sandbox images:
 
 | Image | Description |
 |-------|-------------|
-| `ghcr.io/agent-of-empires/aoe-sandbox:latest` | Base image with Claude Code, OpenCode, Mistral Vibe, Hermes, Codex CLI, Gemini CLI, Cursor CLI, Copilot CLI, Pi, Oh My Pi (OMP), Kiro CLI, Qwen Code, Kimi Code, git, ripgrep, fzf |
+| `ghcr.io/agent-of-empires/aoe-sandbox:latest` | Base image with Claude Code, OpenCode, Mistral Vibe, Hermes, Codex CLI, Gemini CLI, Cursor CLI, Copilot CLI, Pi, Oh My Pi (OMP), Kiro CLI, Qwen Code, Kimi Code, Kilo Code, Cline CLI, Freebuff, GitHub CLI (gh), git, ripgrep, fzf |
 | `ghcr.io/agent-of-empires/aoe-dev-sandbox:latest` | Extended image with additional dev tools |
 
 ### Dev Sandbox Tools
@@ -160,7 +164,7 @@ The dev sandbox (`aoe-dev-sandbox`) includes everything in the base image plus:
 - **Rust** (rustup, cargo, rustc)
 - **uv** (fast Python package manager)
 - **Node.js LTS** (via nvm, with npm and npx)
-- **GitHub CLI** (gh)
+- **tmux**
 
 To use the dev sandbox:
 

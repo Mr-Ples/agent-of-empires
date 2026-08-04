@@ -5442,10 +5442,24 @@ impl HomeView {
 
     /// Run the send-message work after the dialog has been dismissed: call
     /// `ensure_pane_ready` (which may auto-start or respawn), then deliver
-    /// the keystrokes. Errors are surfaced via `info_dialog` so the caller
-    /// (`execute_action`) only has to clear its transient status.
+    /// the keystrokes. Errors are surfaced via `info_dialog`; the return
+    /// value tells callers whether follow-up state, such as a queued first
+    /// prompt, can be cleared.
     ///
-    pub fn execute_send_message(&mut self, session_id: &str, message: &str) {
+    pub fn execute_send_message(&mut self, session_id: &str, message: &str) -> bool {
+        self.execute_send_message_inner(session_id, message, false)
+    }
+
+    pub fn execute_initial_prompt_message(&mut self, session_id: &str, message: &str) -> bool {
+        self.execute_send_message_inner(session_id, message, true)
+    }
+
+    fn execute_send_message_inner(
+        &mut self,
+        session_id: &str,
+        message: &str,
+        wait_for_unknown_agent: bool,
+    ) -> bool {
         let target = std::mem::replace(
             &mut self.pending_send_target,
             live_send::LiveSendTarget::Agent,
@@ -5469,7 +5483,7 @@ impl HomeView {
                             "Send Failed",
                             &format!("Resume failed for sid {sid}; preserved for explicit retry"),
                         ));
-                        return;
+                        return false;
                     }
                     Ok(_) => {}
                     Err(err) => {
@@ -5477,7 +5491,7 @@ impl HomeView {
                             "Send Failed",
                             &format!("Cannot prepare session: {}", err),
                         ));
-                        return;
+                        return false;
                     }
                 }
             }
@@ -5487,7 +5501,7 @@ impl HomeView {
                         "Send Failed",
                         &format!("Cannot prepare terminal: {}", e),
                     ));
-                    return;
+                    return false;
                 }
             }
             live_send::LiveSendTarget::ContainerTerminal => {
@@ -5496,7 +5510,7 @@ impl HomeView {
                         "Send Failed",
                         &format!("Cannot prepare container terminal: {}", e),
                     ));
-                    return;
+                    return false;
                 }
             }
             live_send::LiveSendTarget::Tool(name) => {
@@ -5506,7 +5520,7 @@ impl HomeView {
                         "Send Failed",
                         &format!("Cannot prepare tool '{}': {}", name, e),
                     ));
-                    return;
+                    return false;
                 }
             }
         };
@@ -5515,8 +5529,11 @@ impl HomeView {
                 "Send Failed",
                 "Session disappeared before the message could be sent.",
             ));
-            return;
+            return false;
         };
+        let tool = inst.tool.clone();
+        let detect_as = inst.detect_as.clone();
+        let command = inst.command.clone();
         let tmux_session = match &target {
             live_send::LiveSendTarget::Agent => {
                 match crate::tmux::Session::new(&inst.id, &inst.title) {
@@ -5526,7 +5543,7 @@ impl HomeView {
                             "Send Failed",
                             &format!("Failed to resolve session: {}", e),
                         ));
-                        return;
+                        return false;
                     }
                 }
             }
@@ -5540,11 +5557,30 @@ impl HomeView {
                 crate::tmux::ToolSession::new(&inst.id, &inst.title, name).session_name(),
             ),
         };
+        if matches!(target, live_send::LiveSendTarget::Agent)
+            && !Self::wait_for_agent_input_prompt(
+                &tmux_session,
+                &tool,
+                &detect_as,
+                &command,
+                wait_for_unknown_agent,
+            )
+        {
+            self.info_dialog = Some(InfoDialog::new(
+                "Send Failed",
+                "The agent pane started, but its input prompt did not become ready in time.",
+            ));
+            return false;
+        }
         // Agent gets a tool-specific Enter delay so paste-burst-aware
         // agents (e.g. Codex) don't swallow the final Enter. Shells in
         // the paired terminal panes don't need the delay.
         let delay = match &target {
-            live_send::LiveSendTarget::Agent => crate::agents::send_keys_enter_delay(&inst.tool),
+            live_send::LiveSendTarget::Agent => crate::agents::send_keys_enter_delay_for_tool(
+                &tool,
+                Some(detect_as.as_str()),
+                Some(command.as_str()),
+            ),
             live_send::LiveSendTarget::Terminal
             | live_send::LiveSendTarget::ContainerTerminal
             | live_send::LiveSendTarget::Tool(_) => 0,
@@ -5554,7 +5590,7 @@ impl HomeView {
                 "Send Failed",
                 &format!("Failed to send message: {}", e),
             ));
-            return;
+            return false;
         }
         self.stamp_last_accessed(session_id);
         if let Err(e) = self.save() {
@@ -5563,6 +5599,62 @@ impl HomeView {
         if self.sort_order == crate::session::config::SortOrder::Attention {
             self.select_top_attention(None);
             self.selected_session = None;
+        }
+        true
+    }
+
+    fn wait_for_agent_input_prompt(
+        tmux_session: &crate::tmux::Session,
+        tool: &str,
+        detect_as: &str,
+        command: &str,
+        wait_for_unknown_agent: bool,
+    ) -> bool {
+        let prompt_tool = crate::agents::resolve_agent_behavior_name(
+            tool,
+            Some(detect_as),
+            Some(command),
+        );
+        let Some(prompt_tool) = prompt_tool else {
+            if wait_for_unknown_agent {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+            }
+            return true;
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let content = tmux_session.capture_pane(80).unwrap_or_default();
+            match crate::tmux::agent_input_prompt_visible(&content, prompt_tool) {
+                Some(true) => return true,
+                Some(false) => {
+                    if std::time::Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                None => return true,
+            }
+        }
+    }
+
+    pub fn terminal_pending_initial_prompt(&self, session_id: &str) -> Option<String> {
+        self.get_instance(session_id).and_then(|inst| {
+            (!inst.is_structured())
+                .then(|| inst.pending_initial_turn.clone())
+                .flatten()
+        })
+    }
+
+    pub fn send_next_message_to_agent(&mut self) {
+        self.pending_send_target = live_send::LiveSendTarget::Agent;
+    }
+
+    pub fn clear_pending_initial_prompt(&mut self, session_id: &str) {
+        self.mutate_instance(session_id, |inst| {
+            inst.pending_initial_turn = None;
+        });
+        if let Err(e) = self.save() {
+            tracing::error!(target: "tui.home", "Failed to clear initial prompt: {e}");
         }
     }
 

@@ -1,7 +1,8 @@
 # aoe-dev-sandbox: Extended sandbox with development tools
 # Includes: Rust, uv (Python), nvm + Node.js, pnpm, bun, gh (GitHub CLI)
 # Note: Claude Code, OpenCode, Mistral Vibe, Hermes, Codex CLI, Gemini CLI,
-# Antigravity CLI, Cursor CLI, Copilot CLI, Pi, OMP, Kiro CLI, Qwen Code, and Kimi Code are inherited from the base image
+# Antigravity CLI, Cursor CLI, Copilot CLI, Pi, OMP, Kiro CLI, Qwen Code,
+# Kimi Code, Kilo Code, Cline CLI, and Freebuff are inherited from the base image
 
 ARG BASE_IMAGE=ghcr.io/agent-of-empires/aoe-sandbox:latest
 FROM ${BASE_IMAGE}
@@ -41,6 +42,23 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | b
 RUN apt-get update && apt-get install -y unzip && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
+
+# Install Kilo Code, Cline CLI, and Freebuff
+RUN npm install -g \
+    @kilocode/cli \
+    cline \
+    freebuff \
+    && command -v kilo \
+    && command -v cline \
+    && command -v freebuff \
+    && ln -sf "$(command -v kilo)" /root/.local/bin/kilo \
+    && ln -sf "$(command -v cline)" /root/.local/bin/cline \
+    && ln -sf "$(command -v freebuff)" /root/.local/bin/freebuff \
+    && mkdir -p \
+    /root/.config/kilo \
+    /root/.cline \
+    /root/.config/manicode \
+    /root/.freebuff
 
 # Add dev tool paths to profile.d so they're available in all shells (login and non-login)
 RUN echo 'export PATH="/root/.bun/bin:/root/.cargo/bin:/root/.local/bin:$PATH"' > /etc/profile.d/dev-tools.sh \

@@ -728,7 +728,7 @@ pub const AGENTS: &[AgentDef] = &[
         resume_strategy: ResumeStrategy::Flag("--session"),
         fork_strategy: ForkStrategy::Flag("--fork"),
         host_only: false,
-        send_keys_enter_delay_ms: 0,
+        send_keys_enter_delay_ms: 150,
         install_hint: "curl -fsSL https://opencode.ai/install | bash",
         permission_response: Some(PermissionResponse {
             allow: &[KeyToken::Named("Enter")],
@@ -924,7 +924,7 @@ pub const AGENTS: &[AgentDef] = &[
         resume_strategy: ResumeStrategy::Flag("--session"),
         fork_strategy: ForkStrategy::Unsupported,
         host_only: false,
-        send_keys_enter_delay_ms: 0,
+        send_keys_enter_delay_ms: 150,
         install_hint: "npm install -g @earendil-works/pi-coding-agent",
         permission_response: None,
     },
@@ -1017,7 +1017,7 @@ pub const AGENTS: &[AgentDef] = &[
         resume_strategy: ResumeStrategy::Flag("--resume"),
         fork_strategy: ForkStrategy::Unsupported,
         host_only: false,
-        send_keys_enter_delay_ms: 0,
+        send_keys_enter_delay_ms: 150,
         install_hint:
             "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash",
         permission_response: None,
@@ -1176,6 +1176,69 @@ pub const AGENTS: &[AgentDef] = &[
         host_only: false,
         send_keys_enter_delay_ms: 0,
         install_hint: "curl -fsSL https://omp.sh/install | sh",
+        permission_response: None,
+    },
+    AgentDef {
+        name: "kilo",
+        oneshot_flag: Some("run"),
+        binary: "kilo",
+        launch_subcommand: None,
+        aliases: &["kilocode", "kilo-code"],
+        detection: DetectionMethod::Which("kilo"),
+        yolo: None,
+        instruction_flag: None,
+        set_default_command: false,
+        detect_status: status_detection::detect_basic_agent_status,
+        container_env: &[],
+        hook_config: None,
+        sidecar_hooks: None,
+        resume_strategy: ResumeStrategy::Unsupported,
+        fork_strategy: ForkStrategy::Unsupported,
+        host_only: false,
+        send_keys_enter_delay_ms: 150,
+        install_hint: "npm install -g @kilocode/cli",
+        permission_response: None,
+    },
+    AgentDef {
+        name: "cline",
+        oneshot_flag: None,
+        binary: "cline",
+        launch_subcommand: None,
+        aliases: &[],
+        detection: DetectionMethod::Which("cline"),
+        yolo: Some(YoloMode::CliFlag("--yolo")),
+        instruction_flag: Some("--system {}"),
+        set_default_command: false,
+        detect_status: status_detection::detect_basic_agent_status,
+        container_env: &[],
+        hook_config: None,
+        sidecar_hooks: None,
+        resume_strategy: ResumeStrategy::Flag("--id"),
+        fork_strategy: ForkStrategy::Unsupported,
+        host_only: false,
+        send_keys_enter_delay_ms: 0,
+        install_hint: "npm install -g cline",
+        permission_response: None,
+    },
+    AgentDef {
+        name: "freebuff",
+        oneshot_flag: None,
+        binary: "freebuff",
+        launch_subcommand: None,
+        aliases: &[],
+        detection: DetectionMethod::Which("freebuff"),
+        yolo: None,
+        instruction_flag: None,
+        set_default_command: false,
+        detect_status: status_detection::detect_basic_agent_status,
+        container_env: &[],
+        hook_config: None,
+        sidecar_hooks: None,
+        resume_strategy: ResumeStrategy::Unsupported,
+        fork_strategy: ForkStrategy::Unsupported,
+        host_only: false,
+        send_keys_enter_delay_ms: 0,
+        install_hint: "npm install -g freebuff",
         permission_response: None,
     },
 ];
@@ -1496,7 +1559,17 @@ fn is_safe_agent_name(name: &str) -> bool {
 /// Returns the delay (in ms) to insert before the submit-Enter for this agent.
 /// Non-zero for agents with paste-burst detection that swallows fast Enters.
 pub fn send_keys_enter_delay(tool: &str) -> u64 {
-    get_agent(tool)
+    resolve_agent_def_for_tool(tool, None, None)
+        .map(|a| a.send_keys_enter_delay_ms)
+        .unwrap_or(0)
+}
+
+pub fn send_keys_enter_delay_for_tool(
+    tool: &str,
+    detect_as: Option<&str>,
+    command: Option<&str>,
+) -> u64 {
+    resolve_agent_def_for_tool(tool, detect_as, command)
         .map(|a| a.send_keys_enter_delay_ms)
         .unwrap_or(0)
 }
@@ -1524,6 +1597,31 @@ pub fn resolve_tool_name(cmd: &str) -> Option<&'static str> {
         }
     }
     None
+}
+
+pub fn resolve_agent_behavior_name(
+    tool: &str,
+    detect_as: Option<&str>,
+    command: Option<&str>,
+) -> Option<&'static str> {
+    detect_as
+        .filter(|name| !name.trim().is_empty())
+        .and_then(resolve_tool_name)
+        .or_else(|| get_agent(tool).map(|agent| agent.name))
+        .or_else(|| {
+            command
+                .filter(|cmd| !cmd.trim().is_empty())
+                .and_then(resolve_tool_name)
+        })
+        .or_else(|| resolve_tool_name(tool))
+}
+
+pub fn resolve_agent_def_for_tool(
+    tool: &str,
+    detect_as: Option<&str>,
+    command: Option<&str>,
+) -> Option<&'static AgentDef> {
+    resolve_agent_behavior_name(tool, detect_as, command).and_then(get_agent)
 }
 
 /// Return the install hint for an agent, looked up by canonical name.
@@ -1759,6 +1857,9 @@ mod tests {
         assert_eq!(get_agent("antigravity").unwrap().binary, "agy");
         assert_eq!(get_agent("kimi").unwrap().binary, "kimi");
         assert_eq!(get_agent("omp").unwrap().binary, "omp");
+        assert_eq!(get_agent("kilo").unwrap().binary, "kilo");
+        assert_eq!(get_agent("cline").unwrap().binary, "cline");
+        assert_eq!(get_agent("freebuff").unwrap().binary, "freebuff");
     }
 
     #[test]
@@ -1788,7 +1889,7 @@ mod tests {
         ));
         assert!(matches!(&hermes.yolo, Some(YoloMode::CliFlag("--yolo"))));
         assert!(!hermes.host_only);
-        assert_eq!(hermes.send_keys_enter_delay_ms, 0);
+        assert_eq!(hermes.send_keys_enter_delay_ms, 150);
         assert_eq!(
             hermes.install_hint,
             "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
@@ -1923,7 +2024,10 @@ mod tests {
                 "qwen",
                 "antigravity",
                 "kimi",
-                "omp"
+                "omp",
+                "kilo",
+                "cline",
+                "freebuff"
             ]
         );
     }
@@ -1953,9 +2057,43 @@ mod tests {
         assert_eq!(resolve_tool_name("kimi"), Some("kimi"));
         assert_eq!(resolve_tool_name("kimi-code"), Some("kimi"));
         assert_eq!(resolve_tool_name("omp"), Some("omp"));
+        assert_eq!(resolve_tool_name("kilo"), Some("kilo"));
+        assert_eq!(resolve_tool_name("kilocode"), Some("kilo"));
+        assert_eq!(resolve_tool_name("kilo-code"), Some("kilo"));
+        assert_eq!(resolve_tool_name("kilo-orcarouter"), Some("kilo"));
+        assert_eq!(resolve_tool_name("cline"), Some("cline"));
+        assert_eq!(resolve_tool_name("freebuff"), Some("freebuff"));
         assert_eq!(resolve_tool_name(""), Some("claude"));
         assert_eq!(resolve_tool_name("agent"), Some("cursor"));
         assert_eq!(resolve_tool_name("unknown-tool"), None);
+    }
+
+    #[test]
+    fn test_resolve_agent_behavior_name_prefers_detect_as_then_command_then_name() {
+        assert_eq!(
+            resolve_agent_behavior_name(
+                "custom-opencode-name",
+                Some("kilo"),
+                Some("opencode --model x")
+            ),
+            Some("kilo")
+        );
+        assert_eq!(
+            resolve_agent_behavior_name(
+                "custom-agent",
+                None,
+                Some("ssh -t box kilo --model=orcarouter/tencent-hy3")
+            ),
+            Some("kilo")
+        );
+        assert_eq!(
+            resolve_agent_behavior_name("kilo-orcarouter", None, None),
+            Some("kilo")
+        );
+        assert_eq!(
+            resolve_agent_behavior_name("unknown-agent", None, Some("run something")),
+            None
+        );
     }
 
     #[test]
@@ -1974,6 +2112,9 @@ mod tests {
         assert_eq!(settings_index_from_name(Some("antigravity")), 14);
         assert_eq!(settings_index_from_name(Some("kimi")), 15);
         assert_eq!(settings_index_from_name(Some("omp")), 16);
+        assert_eq!(settings_index_from_name(Some("kilo")), 17);
+        assert_eq!(settings_index_from_name(Some("cline")), 18);
+        assert_eq!(settings_index_from_name(Some("freebuff")), 19);
 
         assert_eq!(name_from_settings_index(0), None);
         assert_eq!(name_from_settings_index(1), Some("claude"));
@@ -1989,6 +2130,9 @@ mod tests {
         assert_eq!(name_from_settings_index(14), Some("antigravity"));
         assert_eq!(name_from_settings_index(15), Some("kimi"));
         assert_eq!(name_from_settings_index(16), Some("omp"));
+        assert_eq!(name_from_settings_index(17), Some("kilo"));
+        assert_eq!(name_from_settings_index(18), Some("cline"));
+        assert_eq!(name_from_settings_index(19), Some("freebuff"));
         assert_eq!(name_from_settings_index(99), None);
     }
 
@@ -2155,14 +2299,20 @@ mod tests {
 
     #[test]
     fn test_send_keys_enter_delay() {
-        // Codex needs a delay to outlast its 120ms paste-burst suppression window
+        // Some TUIs need a delay to outlast paste-burst suppression windows.
         assert!(send_keys_enter_delay("codex") >= 150);
-        // Other agents should not delay
         assert_eq!(send_keys_enter_delay("claude"), 0);
-        assert_eq!(send_keys_enter_delay("opencode"), 0);
-        assert_eq!(send_keys_enter_delay("hermes"), 0);
+        assert_eq!(send_keys_enter_delay("opencode"), 150);
+        assert_eq!(send_keys_enter_delay("kilo"), 150);
+        assert_eq!(send_keys_enter_delay("kilocode"), 150);
+        assert_eq!(send_keys_enter_delay("kilo-code"), 150);
+        assert_eq!(send_keys_enter_delay("kilo-orcarouter"), 150);
+        assert_eq!(send_keys_enter_delay("pi"), 150);
+        assert_eq!(send_keys_enter_delay("hermes"), 150);
         assert_eq!(send_keys_enter_delay("kiro"), 0);
         assert_eq!(send_keys_enter_delay("antigravity"), 0);
+        assert_eq!(send_keys_enter_delay("cline"), 0);
+        assert_eq!(send_keys_enter_delay("freebuff"), 0);
         assert_eq!(send_keys_enter_delay("unknown_agent"), 0);
     }
 
@@ -2219,6 +2369,12 @@ mod tests {
             install_hint("omp"),
             Some("curl -fsSL https://omp.sh/install | sh")
         );
+        assert_eq!(
+            install_hint("kilo"),
+            Some("npm install -g @kilocode/cli")
+        );
+        assert_eq!(install_hint("cline"), Some("npm install -g cline"));
+        assert_eq!(install_hint("freebuff"), Some("npm install -g freebuff"));
         assert!(install_hint("unknown").is_none());
     }
 
