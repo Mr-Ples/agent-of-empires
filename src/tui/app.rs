@@ -1954,8 +1954,9 @@ impl App {
             }
 
             if let Some(session_id) = self.home.apply_creation_results() {
-                self.send_created_initial_prompt(&session_id, terminal)?;
-                self.dispatch_new_session_attach(&session_id, terminal)?;
+                if !self.home.queue_initial_prompt_start(&session_id) {
+                    self.dispatch_new_session_attach(&session_id, terminal)?;
+                }
                 // A structured session routes the post-create attach into
                 // `pending_structured_view_open`; drain it here (this tick
                 // path sits outside the key/click drains).
@@ -3539,8 +3540,9 @@ impl App {
                 self.attach_session(&id, terminal)?;
             }
             Action::AttachAfterCreate(id) => {
-                self.send_created_initial_prompt(&id, terminal)?;
-                self.dispatch_new_session_attach(&id, terminal)?;
+                if !self.home.queue_initial_prompt_start(&id) {
+                    self.dispatch_new_session_attach(&id, terminal)?;
+                }
             }
             Action::AttachTerminal(id, mode) => {
                 self.attach_terminal(&id, mode, terminal)?;
@@ -3984,34 +3986,6 @@ impl App {
                 self.attach_session(session_id, terminal)
             }
         }
-    }
-
-    fn send_created_initial_prompt(
-        &mut self,
-        session_id: &str,
-        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    ) -> Result<()> {
-        let Some(prompt) = self.home.terminal_pending_initial_prompt(session_id) else {
-            return Ok(());
-        };
-
-        let warm = self.home.agent_pane_is_warm(session_id);
-        if !warm {
-            self.home
-                .set_instance_status(session_id, crate::session::Status::Starting);
-            self.update_status = Some(UpdateStatus::transient("Sending first prompt...".into()));
-            self.draw(terminal)?;
-        }
-
-        self.home.send_next_message_to_agent();
-        let sent = self.home.execute_initial_prompt_message(session_id, &prompt);
-        if sent {
-            self.home.clear_pending_initial_prompt(session_id);
-        }
-        if !warm {
-            self.update_status = None;
-        }
-        Ok(())
     }
 
     fn attach_session(

@@ -778,6 +778,9 @@ pub struct HomeView {
     /// Suppresses the StatusPoller's missing-tmux Error transition until the
     /// worker reports back via `apply_restart_results`.
     pub(super) restart_in_flight: std::collections::HashSet<String>,
+    /// Newly-created sessions whose first prompt is being delivered by the
+    /// restart worker. Their launch must never run on the TUI event loop.
+    pub(super) initial_prompt_starts: std::collections::HashSet<String>,
 
     /// Trashed sessions whose permanent-purge Purge claim (#2541) this TUI won
     /// before dispatching the teardown. Their delete finalize applies the #2534
@@ -2279,6 +2282,7 @@ impl HomeView {
             trash_poller: crate::tui::trash_poller::TrashPoller::new(),
             restart_poller: RestartPoller::new(),
             restart_in_flight: std::collections::HashSet::new(),
+            initial_prompt_starts: std::collections::HashSet::new(),
             purge_claimed: std::collections::HashSet::new(),
             creation_poller: CreationPoller::new(),
             creation_cancelled: false,
@@ -3610,6 +3614,7 @@ impl HomeView {
                     } = result;
 
                     self.restart_in_flight.remove(&session_id);
+                    let initial_prompt_start = self.initial_prompt_starts.remove(&session_id);
 
                     match outcome {
                         Ok(crate::session::StartOutcome::ResumeFailed { sid }) => {
@@ -3641,8 +3646,19 @@ impl HomeView {
                                      own resume/history picker."
                                 ),
                             ));
+                            if initial_prompt_start {
+                                self.mutate_instance(&session_id, |inst| {
+                                    inst.pending_initial_turn = None;
+                                });
+                            }
                         }
-                        Ok(_) => {}
+                        Ok(_) => {
+                            if initial_prompt_start {
+                                self.mutate_instance(&session_id, |inst| {
+                                    inst.pending_initial_turn = None;
+                                });
+                            }
+                        }
                         Err(e) => {
                             tracing::warn!(
                                 target: "session.restart",
@@ -5447,18 +5463,13 @@ impl HomeView {
     /// prompt, can be cleared.
     ///
     pub fn execute_send_message(&mut self, session_id: &str, message: &str) -> bool {
-        self.execute_send_message_inner(session_id, message, false)
-    }
-
-    pub fn execute_initial_prompt_message(&mut self, session_id: &str, message: &str) -> bool {
-        self.execute_send_message_inner(session_id, message, true)
+        self.execute_send_message_inner(session_id, message)
     }
 
     fn execute_send_message_inner(
         &mut self,
         session_id: &str,
         message: &str,
-        wait_for_unknown_agent: bool,
     ) -> bool {
         let target = std::mem::replace(
             &mut self.pending_send_target,
@@ -5563,7 +5574,6 @@ impl HomeView {
                 &tool,
                 &detect_as,
                 &command,
-                wait_for_unknown_agent,
             )
         {
             self.info_dialog = Some(InfoDialog::new(
@@ -5608,7 +5618,6 @@ impl HomeView {
         tool: &str,
         detect_as: &str,
         command: &str,
-        wait_for_unknown_agent: bool,
     ) -> bool {
         let prompt_tool = crate::agents::resolve_agent_behavior_name(
             tool,
@@ -5616,9 +5625,9 @@ impl HomeView {
             Some(command),
         );
         let Some(prompt_tool) = prompt_tool else {
-            if wait_for_unknown_agent {
-                std::thread::sleep(std::time::Duration::from_secs(10));
-            }
+            // Unknown agents have no prompt marker to poll for. `ensure_pane_ready`
+            // has already confirmed the tmux pane is alive, so send immediately
+            // instead of blocking the TUI for an arbitrary startup delay.
             return true;
         };
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -5645,17 +5654,38 @@ impl HomeView {
         })
     }
 
-    pub fn send_next_message_to_agent(&mut self) {
-        self.pending_send_target = live_send::LiveSendTarget::Agent;
-    }
+    /// Launch a freshly-created session and send its first prompt outside the
+    /// TUI event loop. The restart worker already owns the slow start cascade
+    /// (Docker, hooks, tmux) and its detached wake worker sends after the pane
+    /// is live, so list navigation remains responsive throughout startup.
+    pub fn queue_initial_prompt_start(&mut self, session_id: &str) -> bool {
+        let Some(prompt) = self.terminal_pending_initial_prompt(session_id) else {
+            return false;
+        };
+        let Some(instance) = self.get_instance(session_id).cloned() else {
+            return false;
+        };
 
-    pub fn clear_pending_initial_prompt(&mut self, session_id: &str) {
         self.mutate_instance(session_id, |inst| {
-            inst.pending_initial_turn = None;
+            inst.status = crate::session::Status::Starting;
+            inst.last_error = None;
+            inst.last_start_time = Some(std::time::Instant::now());
+            inst.touch_last_accessed();
         });
         if let Err(e) = self.save() {
-            tracing::error!(target: "tui.home", "Failed to clear initial prompt: {e}");
+            tracing::error!(target: "tui.home", "Failed to persist queued initial prompt: {e}");
         }
+
+        self.initial_prompt_starts.insert(session_id.to_string());
+        self.restart_in_flight.insert(session_id.to_string());
+        self.restart_poller
+            .request_restart(crate::tui::restart_poller::RestartRequest {
+                session_id: session_id.to_string(),
+                instance,
+                size: crate::terminal::get_size(),
+                wake_message: prompt,
+            });
+        true
     }
 
     /// Send the tmux keystrokes for a permission-prompt decision straight
