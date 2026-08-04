@@ -2899,22 +2899,25 @@ fn test_enter_returns_attach_terminal_in_terminal_view() {
 
 #[test]
 #[serial]
-fn test_shift_t_attaches_terminal_from_structured_view() {
+fn test_ctrl_t_attaches_terminal_from_structured_view() {
     let env = create_test_env_with_sessions(1);
     let mut view = env.view;
 
     // Should be in Structured view by default
     assert_eq!(view.view_mode, ViewMode::Structured);
 
-    // Shift+T should return AttachTerminal without switching view mode
-    let action = view.handle_key(key(KeyCode::Char('T')), None);
+    // Ctrl+T should return AttachTerminal without switching view mode.
+    let action = view.handle_key(
+        KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        None,
+    );
     assert!(matches!(action, Some(Action::AttachTerminal(_, _))));
     assert_eq!(view.view_mode, ViewMode::Structured);
 }
 
 #[test]
 #[serial]
-fn test_shift_t_attaches_terminal_from_terminal_view() {
+fn test_ctrl_t_attaches_terminal_from_terminal_view() {
     let env = create_test_env_with_sessions(1);
     let mut view = env.view;
 
@@ -2922,8 +2925,11 @@ fn test_shift_t_attaches_terminal_from_terminal_view() {
     view.handle_key(key(KeyCode::Char('t')), None);
     assert_eq!(view.view_mode, ViewMode::Terminal);
 
-    // Shift+T should also work from Terminal view
-    let action = view.handle_key(key(KeyCode::Char('T')), None);
+    // Ctrl+T should also work from Terminal view.
+    let action = view.handle_key(
+        KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        None,
+    );
     assert!(matches!(action, Some(Action::AttachTerminal(_, _))));
 }
 

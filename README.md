@@ -46,7 +46,7 @@ A session manager for AI coding agents on Linux and macOS, driven from the termi
 - **Web dashboard**: create, monitor, and control your agents from any browser, installable as a PWA
 - **Structured view** (web dashboard default): mobile-first native rendering of agent state via the Agent Client Protocol, with plan panels, tool-call cards, and swipe-to-approve. Flip a session to the terminal view for raw tmux rendering
 - **CLI and HTTP API**: drive sessions from the command line or external orchestrators (integrates with tools like OpenClaw)
-- **Remote phone access**: press `R` in the TUI to expose the web dashboard over HTTPS with QR + passphrase auth, via Tailscale Funnel or Cloudflare Tunnel
+- **Remote phone access**: press `Shift+T` in the TUI to expose the web dashboard over HTTPS with QR + passphrase auth, via Tailscale Funnel or Cloudflare Tunnel
 - **Status detection**: see which agents are running, waiting for input, or idle
 - **Git worktrees and multi-repo workspaces**: parallel agents across branches, or one session driving several git repositories
 - **Docker sandboxing**: isolate agents in containers with shared auth volumes (Podman and Apple Containers also supported)
@@ -63,7 +63,7 @@ See the [full features inventory](https://www.agent-of-empires.com/docs/features
 
 ## Web Dashboard
 
-Access your agents from any browser. The real agent terminal renders in the page; switch sessions, type into the terminal, and review diffs without leaving the tab. Press `R` in the TUI to start the server, or see the [web dashboard guide](https://www.agent-of-empires.com/guides/web-dashboard/) for details.
+Access your agents from any browser. The real agent terminal renders in the page; switch sessions, type into the terminal, and review diffs without leaving the tab. Press `Shift+T` in the TUI to start the server, or see the [web dashboard guide](https://www.agent-of-empires.com/guides/web-dashboard/) for details.
 
 ## How It Works
 

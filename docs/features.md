@@ -36,7 +36,7 @@ REST endpoints for driving sessions from external orchestrators. Same operations
 
 ### Remote phone access
 
-Press `R` in the TUI to expose the web dashboard over HTTPS with QR + passphrase auth. Uses Tailscale Funnel when available for a stable URL that survives restarts, falling back to Cloudflare Tunnel. Installs as a PWA on your phone, so notifications keep working after you put the device down.
+Press `Shift+T` in the TUI to expose the web dashboard over HTTPS with QR + passphrase auth. Uses Tailscale Funnel when available for a stable URL that survives restarts, falling back to Cloudflare Tunnel. Installs as a PWA on your phone, so notifications keep working after you put the device down.
 
 [Remote Phone Access guide](guides/remote-phone-access.md)
 

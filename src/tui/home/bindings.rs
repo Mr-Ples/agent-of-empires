@@ -668,7 +668,7 @@ pub static BINDINGS: &[Binding] = &[
     },
     Binding {
         id: ActionId::AttachTerminal,
-        non_strict: &[k('T')],
+        non_strict: &[ctrl('t')],
         strict: &[ctrl('t')],
         context: Context::Always,
         help: Some(HelpMeta {
@@ -812,7 +812,7 @@ pub static BINDINGS: &[Binding] = &[
     },
     Binding {
         id: ActionId::Serve,
-        non_strict: &[k('R')],
+        non_strict: &[k('T')],
         strict: &[ctrl('r')],
         context: Context::Always,
         help: Some(HelpMeta {
@@ -1300,9 +1300,8 @@ mod tests {
             ('d', ActionId::Delete),
             ('D', ActionId::Diff),
             ('r', ActionId::Rename),
-            ('R', ActionId::Serve),
+            ('T', ActionId::Serve),
             ('t', ActionId::ToggleView),
-            ('T', ActionId::AttachTerminal),
             ('n', ActionId::NewSession),
             ('N', ActionId::NewFromSelection),
             ('p', ActionId::Projects),
@@ -1321,6 +1320,11 @@ mod tests {
                 "non-strict '{ch}'"
             );
         }
+        assert_eq!(
+            resolve(&ctrl_key('t'), false, &c),
+            Some(ActionId::AttachTerminal),
+            "non-strict Ctrl+T"
+        );
     }
 
     #[test]
