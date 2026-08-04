@@ -998,20 +998,22 @@ impl HomeView {
         // (see `wrapped_transcript`), so (row, column) slicing below maps
         // one-to-one onto the on-screen cells. Terminal previews keep
         // reading the tmux capture cache.
+        #[cfg(feature = "serve")]
+        let structured_lines = self
+            .structured_preview
+            .as_ref()
+            .filter(|v| {
+                self.selected_session
+                    .as_deref()
+                    .is_some_and(|id| id == v.session_id())
+            })
+            .map(|v| v.selection_text(width));
+
         let lines = if let Some(text) = self.issue_preview_text.as_ref() {
             text
         } else {
             #[cfg(feature = "serve")]
             {
-                let structured_lines = self
-                    .structured_preview
-                    .as_ref()
-                    .filter(|v| {
-                        self.selected_session
-                            .as_deref()
-                            .is_some_and(|id| id == v.session_id())
-                    })
-                    .map(|v| v.selection_text(width));
                 match structured_lines.as_ref() {
                     Some(text) => text,
                     None => self.active_preview_cache().parsed_text.as_ref()?,

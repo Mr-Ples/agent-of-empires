@@ -60,7 +60,7 @@ impl GlobalSelection {
                 self.gesture = Some(SelectionGesture::Selecting { anchor, extent });
                 true
             }
-            SelectionGesture::Selecting { anchor, extent: old } if old == extent => false,
+            SelectionGesture::Selecting { anchor: _, extent: old } if old == extent => false,
             SelectionGesture::Selecting { anchor, .. } => {
                 self.gesture = Some(SelectionGesture::Selecting { anchor, extent });
                 true

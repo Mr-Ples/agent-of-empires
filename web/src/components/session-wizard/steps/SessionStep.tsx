@@ -1,26 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchBranches } from "../../../lib/api";
 import type { BranchInfo } from "../../../lib/api";
-
-interface WizardData {
-  path: string;
-  title: string;
-  worktreeBranch: string;
-  useWorktree: boolean;
-  /** Attach to an existing branch's worktree instead of creating one.
-   *  Mirrors the TUI new-session toggle. See #969. */
-  attachExisting: boolean;
-  baseBranch: string;
-  issueRef?: string;
-  injectIssueContext?: boolean;
-  group: string;
-  tool: string;
-  scratch: boolean;
-  /** Whether `path` is a git repository. Worktrees need a repo, so the
-   *  worktree toggle is disabled when this is false. See #2680 follow-up. */
-  pathIsGitRepo: boolean;
-  [key: string]: unknown;
-}
+import type { WizardData } from "../wizardReducer";
 
 interface Props {
   data: WizardData;
