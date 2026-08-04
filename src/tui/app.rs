@@ -3732,6 +3732,52 @@ impl App {
             Action::LaunchGlobalLazygit(repo_path) => {
                 self.launch_global_lazygit(&repo_path, terminal)?;
             }
+            Action::UpdateIssueFromBase {
+                worktree_path,
+                base_branch,
+            } => {
+                let fetch = Command::new("git")
+                    .args(["-C", &worktree_path, "fetch", "origin", &base_branch])
+                    .output();
+                match fetch {
+                    Ok(output) if output.status.success() => {
+                        match Command::new("git")
+                            .args(["-C", &worktree_path, "rebase", "FETCH_HEAD"])
+                            .output()
+                        {
+                            Ok(output) if output.status.success() => {
+                                self.update_status = Some(UpdateStatus::transient(format!(
+                                    "rebased issue worktree onto {base_branch}"
+                                )));
+                            }
+                            Ok(output) => {
+                                let error = String::from_utf8_lossy(&output.stderr);
+                                self.update_status = Some(UpdateStatus::transient(format!(
+                                    "rebase onto {base_branch} failed: {}",
+                                    error.lines().next().unwrap_or("resolve conflicts, then continue or abort the rebase")
+                                )));
+                            }
+                            Err(error) => {
+                                self.update_status = Some(UpdateStatus::transient(format!(
+                                    "could not run git rebase: {error}"
+                                )));
+                            }
+                        }
+                    }
+                    Ok(output) => {
+                        let error = String::from_utf8_lossy(&output.stderr);
+                        self.update_status = Some(UpdateStatus::transient(format!(
+                            "fetch failed: {}",
+                            error.lines().next().unwrap_or("git fetch failed")
+                        )));
+                    }
+                    Err(error) => {
+                        self.update_status = Some(UpdateStatus::transient(format!(
+                            "could not run git fetch: {error}"
+                        )));
+                    }
+                }
+            }
             Action::SpawnImagePull(image) => {
                 if self.image_pull_rx.is_some() {
                     self.update_status = Some(UpdateStatus::transient(
@@ -4541,6 +4587,10 @@ pub enum Action {
         base_branch: String,
     },
     LaunchGlobalLazygit(String),
+    UpdateIssueFromBase {
+        worktree_path: String,
+        base_branch: String,
+    },
     /// Pull the sandbox image after the user accepts the "image update
     /// available" banner's confirm. Deferred to `execute_action` so the loop
     /// can show a "pulling…" status before the blocking pull starts.

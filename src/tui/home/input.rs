@@ -1778,6 +1778,9 @@ impl HomeView {
                         IssueAction::DetachSession => Action::DetachSessionFromIssue {
                             session_id: attached_session_id.unwrap_or_default(),
                         },
+                        IssueAction::UpdateFromBase => {
+                            return self.update_selected_issue_from_base();
+                        }
                     });
                 }
             }
@@ -2869,6 +2872,7 @@ impl HomeView {
             ActionId::IssueActions => self.open_issue_actions_dialog(),
             ActionId::CheckoutIssueWorktree => return self.checkout_selected_issue_worktree(),
             ActionId::CheckoutIssueBaseBranch => return self.checkout_selected_issue_base_branch(),
+            ActionId::UpdateIssueFromBase => return self.update_selected_issue_from_base(),
             ActionId::NewFromSelection => self.open_new_from_selection(),
             ActionId::NewFromProject => self.open_project_session_picker(),
             ActionId::AttachTerminal => return self.attach_terminal_for_selected(),
@@ -2940,7 +2944,13 @@ impl HomeView {
     fn checkout_selected_issue_worktree(&mut self) -> Option<Action> {
         let id = self.selected_session.clone()?;
         let instance = self.get_instance(&id)?;
-        let worktree = instance.worktree_info.as_ref()?;
+        let Some(worktree) = instance.worktree_info.as_ref() else {
+            self.info_dialog = Some(InfoDialog::sized_to_fit(
+                "Worktree unavailable",
+                "This issue is attached to a session without a managed worktree.",
+            ));
+            return None;
+        };
         Some(Action::CheckoutIssueBranch {
             repo_path: worktree.main_repo_path.clone(),
             worktree_path: instance.project_path.clone(),
@@ -2963,6 +2973,29 @@ impl HomeView {
         };
         Some(Action::CheckoutIssueBaseBranch {
             repo_path: worktree.main_repo_path.clone(),
+            base_branch,
+        })
+    }
+
+    fn update_selected_issue_from_base(&mut self) -> Option<Action> {
+        let id = self.selected_session.clone()?;
+        let instance = self.get_instance(&id)?;
+        let Some(worktree) = instance.worktree_info.as_ref() else {
+            self.info_dialog = Some(InfoDialog::sized_to_fit(
+                "Worktree unavailable",
+                "This issue is attached to a session without a managed worktree.",
+            ));
+            return None;
+        };
+        let Some(base_branch) = worktree.base_branch.clone() else {
+            self.info_dialog = Some(InfoDialog::sized_to_fit(
+                "Base branch unavailable",
+                "This issue worktree has no recorded base branch.",
+            ));
+            return None;
+        };
+        Some(Action::UpdateIssueFromBase {
+            worktree_path: instance.project_path.clone(),
             base_branch,
         })
     }

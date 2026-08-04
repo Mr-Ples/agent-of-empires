@@ -4013,6 +4013,11 @@ impl HomeView {
                         if strict { kctrl('v') } else { kc('V') },
                         mk(if strict { "^V" } else { "V" }, "Base branch"),
                     ));
+                    groups.push((
+                        2,
+                        kctrl('b'),
+                        mk("^B", "Update base"),
+                    ));
                 }
                 if matches!(
                     self.flat_items.get(self.cursor),

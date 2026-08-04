@@ -42,6 +42,7 @@ pub enum ActionId {
     IssueActions,
     CheckoutIssueWorktree,
     CheckoutIssueBaseBranch,
+    UpdateIssueFromBase,
     NewFromSelection,
     NewFromProject,
     AttachTerminal,
@@ -600,6 +601,22 @@ pub static BINDINGS: &[Binding] = &[
         }),
     },
     Binding {
+        id: ActionId::UpdateIssueFromBase,
+        non_strict: &[ctrl('b')],
+        strict: &[ctrl('b')],
+        context: Context::IssueWorktreeAvailable,
+        help: Some(HelpMeta {
+            section: HelpSection::Actions,
+            desc: "Rebase issue worktree onto base branch",
+        }),
+        palette: Some(PaletteMeta {
+            title: "Update selected issue from base branch",
+            keywords: &["issue", "worktree", "base", "pull", "rebase", "update"],
+            group: PaletteGroup::Actions,
+            serve_only: false,
+        }),
+    },
+    Binding {
         id: ActionId::NewSession,
         non_strict: &[k('n')],
         strict: &[k('N')],
@@ -1083,6 +1100,7 @@ pub fn palette_id(id: ActionId) -> &'static str {
         ActionId::IssueActions => "issue-actions",
         ActionId::CheckoutIssueWorktree => "checkout-issue-worktree",
         ActionId::CheckoutIssueBaseBranch => "checkout-issue-base-branch",
+        ActionId::UpdateIssueFromBase => "update-issue-from-base",
         ActionId::NewFromSelection => "new-from-selection",
         ActionId::NewFromProject => "new-from-project",
         ActionId::AttachTerminal => "attach-terminal",
