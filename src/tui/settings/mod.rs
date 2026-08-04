@@ -122,6 +122,16 @@ pub(super) struct SearchHit {
     pub value_display: String,
 }
 
+/// Prebuilt, scope-specific data for the settings search. Constructing a
+/// `SettingField` serializes and merges configuration, so the catalog is
+/// refreshed when settings state changes, never while a search key is handled.
+#[derive(Debug, Clone)]
+struct SearchCatalogEntry {
+    hit: SearchHit,
+    title: String,
+    full: String,
+}
+
 /// One row in the left-hand categories panel. Sections are
 /// non-interactive dividers that group related categories visually
 /// (Sessions, Hooks, Environment, etc.); navigation skips past them
@@ -250,6 +260,9 @@ pub struct SettingsView {
     /// then by field order.
     pub(super) search_hits: Vec<SearchHit>,
 
+    /// Searchable fields for the current scope, built outside the input path.
+    search_catalog: Vec<SearchCatalogEntry>,
+
     /// Cursor inside `search_hits`, bounded by `search_hits.len()`
     /// so it stays valid as the query narrows.
     pub(super) search_selected: usize,
@@ -373,6 +386,7 @@ impl SettingsView {
             success_message_expires_at: None,
             search_input: None,
             search_hits: Vec::new(),
+            search_catalog: Vec::new(),
             search_selected: 0,
             search_hit_rows: Vec::new(),
             search_popup_area: ratatui::layout::Rect::default(),
@@ -391,6 +405,7 @@ impl SettingsView {
         // Tab before the first render so the cursor lands on Theme.
         view.selected_category = view.first_tab_index();
         view.rebuild_fields();
+        view.rebuild_search_catalog();
         Ok(view)
     }
 
@@ -508,6 +523,7 @@ impl SettingsView {
                     .position(|r| *r == CategoryRow::Tab(category))
             })
             .unwrap_or_else(|| self.first_tab_index());
+        self.rebuild_search_catalog();
     }
 
     /// First selectable row in `self.categories`. Section dividers are
@@ -578,6 +594,43 @@ impl SettingsView {
         // section divider, advance to the next real field so the user
         // never sees the cursor parked on a heading.
         self.snap_to_interactive_field_forward();
+    }
+
+    /// Refresh the searchable field catalog after a settings-state change.
+    /// This deliberately performs the expensive field construction outside
+    /// `/` search input handling, so the first query only fuzzy-scores cached
+    /// strings.
+    fn rebuild_search_catalog(&mut self) {
+        let (scope_for_fields, global_ref, profile_ref) = self.field_build_inputs();
+        let mut catalog = Vec::new();
+
+        for category in self.categories.iter().filter_map(|row| row.as_tab()) {
+            for field in fields::build_fields_for_category(
+                category,
+                scope_for_fields,
+                global_ref,
+                profile_ref,
+            ) {
+                if field.is_section_header() {
+                    continue;
+                }
+                let title = format!("{} {}", category.label(), field.label);
+                let full = format!("{} {}", title, field.description);
+                catalog.push(SearchCatalogEntry {
+                    hit: SearchHit {
+                        category,
+                        field_ident: field.ident(),
+                        field_label: field.label.clone(),
+                        category_label: category.label(),
+                        value_display: field.display_value(),
+                    },
+                    title,
+                    full,
+                });
+            }
+        }
+
+        self.search_catalog = catalog;
     }
 
     /// Re-sync the in-memory `plugins` config after the embedded manager
@@ -665,6 +718,7 @@ impl SettingsView {
             .map(repo_config_to_profile)
             .unwrap_or_default();
         self.rebuild_fields();
+        self.rebuild_search_catalog();
         Ok(())
     }
 
@@ -1010,10 +1064,9 @@ impl SettingsView {
     }
 
     /// Rebuild `search_hits` from the current `search_input` query.
-    /// Iterates every visible category for the current scope, calls
-    /// the same `build_fields_for_category` the main panel uses, and
-    /// keeps fields where every whitespace-separated query token
-    /// fuzzy-matches the category label + field label + description.
+    /// Scores the prebuilt catalog for the current scope, keeping fields where
+    /// every whitespace-separated query token fuzzy-matches the category label
+    /// + field label + description.
     /// Hits are ranked best-match-first (title matches above
     /// description-only mentions); empty query keeps every interactive
     /// field in natural order. Section-header rows are always skipped
@@ -1025,38 +1078,12 @@ impl SettingsView {
             .map(|i| i.value().to_string())
             .unwrap_or_default();
 
-        let (scope_for_fields, global_ref, profile_ref) = self.field_build_inputs();
-
         let mut scored: Vec<(SearchHit, u32)> = Vec::new();
-        for category in self.categories.iter().filter_map(|r| r.as_tab()) {
-            let fields = fields::build_fields_for_category(
-                category,
-                scope_for_fields,
-                global_ref,
-                profile_ref,
-            );
-            for field in fields {
-                if field.is_section_header() {
-                    continue;
-                }
-                // The category label is part of the title so "sandbox"
-                // matches (and ranks) every field on the Sandbox tab.
-                let title = format!("{} {}", category.label(), field.label);
-                let full = format!("{} {}", title, field.description);
-                let Some(score) = fuzzy_settings_score(&query, &title, &full) else {
-                    continue;
-                };
-                scored.push((
-                    SearchHit {
-                        category,
-                        field_ident: field.ident(),
-                        field_label: field.label.clone(),
-                        category_label: category.label(),
-                        value_display: field.display_value(),
-                    },
-                    score,
-                ));
-            }
+        for entry in &self.search_catalog {
+            let Some(score) = fuzzy_settings_score(&query, &entry.title, &entry.full) else {
+                continue;
+            };
+            scored.push((entry.hit.clone(), score));
         }
 
         // Stable sort by score descending: ties (and the empty-query case where
@@ -1459,7 +1486,8 @@ mod dirty_tracking_tests {
 
 #[cfg(test)]
 mod search_tests {
-    use super::fuzzy_settings_score;
+    use super::{fuzzy_settings_score, test_util::fresh_view};
+    use serial_test::serial;
 
     const TITLE: &str = "Session Max Concurrent Workers";
     const FULL: &str = "Session Max Concurrent Workers How many agents run at once";
@@ -1523,6 +1551,25 @@ mod search_tests {
             title_hit > desc_hit,
             "title match ({title_hit}) must outrank description match ({desc_hit})"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn search_scores_the_prebuilt_catalog_without_rebuilding_fields() {
+        let (_temp, _guard, mut view) = fresh_view();
+        assert!(
+            !view.search_catalog.is_empty(),
+            "settings construction should prepare a search catalog"
+        );
+
+        view.open_search();
+        assert_eq!(view.search_hits.len(), view.search_catalog.len());
+
+        // If search rebuilt fields on every input event, clearing this cache
+        // would repopulate hits. It must instead score the catalog it has.
+        view.search_catalog.clear();
+        view.recompute_search_hits();
+        assert!(view.search_hits.is_empty());
     }
 }
 
