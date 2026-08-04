@@ -3736,6 +3736,36 @@ impl App {
                 worktree_path,
                 base_branch,
             } => {
+                let stash = Command::new("git")
+                    .args([
+                        "-C",
+                        &worktree_path,
+                        "stash",
+                        "push",
+                        "--include-untracked",
+                        "--message",
+                        "aoe automatic base update",
+                    ])
+                    .output();
+                let stashed_changes = match stash {
+                    Ok(output) if output.status.success() => {
+                        !String::from_utf8_lossy(&output.stdout).contains("No local changes to save")
+                    }
+                    Ok(output) => {
+                        let error = String::from_utf8_lossy(&output.stderr);
+                        self.update_status = Some(UpdateStatus::transient(format!(
+                            "could not save local changes: {}",
+                            error.lines().next().unwrap_or("git stash failed")
+                        )));
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        self.update_status = Some(UpdateStatus::transient(format!(
+                            "could not run git stash: {error}"
+                        )));
+                        return Ok(());
+                    }
+                };
                 match Command::new("git")
                     .args([
                         "-C",
@@ -3749,14 +3779,32 @@ impl App {
                     .output()
                 {
                     Ok(output) if output.status.success() => {
-                        self.update_status = Some(UpdateStatus::transient(format!(
-                            "updated from {base_branch}"
-                        )));
+                        if stashed_changes {
+                            match Command::new("git")
+                                .args(["-C", &worktree_path, "stash", "pop"])
+                                .output()
+                            {
+                                Ok(output) if output.status.success() => {
+                                    self.update_status = Some(UpdateStatus::transient(format!(
+                                        "updated from {base_branch} and restored local changes"
+                                    )));
+                                }
+                                Ok(_) | Err(_) => {
+                                    self.update_status = Some(UpdateStatus::transient(format!(
+                                        "updated from {base_branch}; local changes remain safely stashed"
+                                    )));
+                                }
+                            }
+                        } else {
+                            self.update_status = Some(UpdateStatus::transient(format!(
+                                "updated from {base_branch}"
+                            )));
+                        }
                     }
                     Ok(output) => {
                         let error = String::from_utf8_lossy(&output.stderr);
                         self.update_status = Some(UpdateStatus::transient(format!(
-                            "update from {base_branch} failed: {}",
+                            "update from {base_branch} failed: {}; local changes remain safely stashed",
                             error.lines().next().unwrap_or("resolve conflicts, then continue or abort the rebase")
                         )));
                     }
