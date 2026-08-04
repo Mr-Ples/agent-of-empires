@@ -33,6 +33,7 @@ pub enum ActionId {
     Quit,
     Help,
     ToolPicker,
+    LaunchGlobalLazygit,
     SearchStart,
     SearchNext,
     NewSession,
@@ -481,6 +482,22 @@ pub static BINDINGS: &[Binding] = &[
             desc: "Open tool session",
         }),
         palette: None,
+    },
+    Binding {
+        id: ActionId::LaunchGlobalLazygit,
+        non_strict: &[k('l')],
+        strict: &[k('L')],
+        context: Context::Always,
+        help: Some(HelpMeta {
+            section: HelpSection::Views,
+            desc: "Open repository lazygit",
+        }),
+        palette: Some(PaletteMeta {
+            title: "Open repository lazygit",
+            keywords: &["git", "lazygit", "repository"],
+            group: PaletteGroup::Views,
+            serve_only: false,
+        }),
     },
     Binding {
         id: ActionId::SearchStart,
@@ -1093,6 +1110,7 @@ pub fn palette_id(id: ActionId) -> &'static str {
         ActionId::NextWaiting => "next-waiting",
         ActionId::Quit => "quit",
         ActionId::ToolPicker => "tool-picker",
+        ActionId::LaunchGlobalLazygit => "launch-global-lazygit",
         ActionId::SearchStart => "search",
         ActionId::SearchNext => "search-next",
         ActionId::Update => "update",

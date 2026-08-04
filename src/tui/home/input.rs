@@ -2845,6 +2845,11 @@ impl HomeView {
                     self.open_tool_picker();
                 }
             }
+            ActionId::LaunchGlobalLazygit => {
+                return self.activate_picked_tool(
+                    crate::tui::dialogs::GLOBAL_LAZYGIT_TOOL.to_string(),
+                );
+            }
             ActionId::SearchStart => {
                 self.search_active = true;
                 self.search_query = Input::default();
