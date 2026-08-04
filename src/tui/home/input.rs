@@ -532,14 +532,10 @@ impl HomeView {
 
     fn activate_picked_tool(&mut self, tool_name: String) -> Option<Action> {
         if tool_name == crate::tui::dialogs::GLOBAL_LAZYGIT_TOOL {
-            let repo_path = self
-                .active_issue_project()
-                .map(|project| project.path.clone())
-                .or_else(|| {
-                    std::env::current_dir()
-                        .ok()
-                        .map(|path| path.to_string_lossy().into_owned())
-                });
+            let repo_path = std::env::current_dir()
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
+                .or_else(|| self.active_issue_project().map(|project| project.path.clone()));
             return repo_path.map(Action::LaunchGlobalLazygit);
         }
         self.activate_tool(tool_name, false)
@@ -2947,6 +2943,7 @@ impl HomeView {
         let worktree = instance.worktree_info.as_ref()?;
         Some(Action::CheckoutIssueBranch {
             repo_path: worktree.main_repo_path.clone(),
+            worktree_path: instance.project_path.clone(),
             branch: worktree.branch.clone(),
         })
     }

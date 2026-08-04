@@ -3647,7 +3647,11 @@ impl App {
                     ))),
                 }
             }
-            Action::CheckoutIssueBranch { repo_path, branch } => {
+            Action::CheckoutIssueBranch {
+                repo_path,
+                worktree_path,
+                branch,
+            } => {
                 // The branch is already checked out in the issue's linked
                 // worktree. The explicit override is what lets the user
                 // inspect that same branch from the main repository.
@@ -3662,9 +3666,18 @@ impl App {
                     .output()
                 {
                     Ok(output) if output.status.success() => {
-                        self.update_status = Some(UpdateStatus::transient(format!(
-                            "checked out {branch}"
-                        )));
+                        match std::env::set_current_dir(&worktree_path) {
+                            Ok(()) => {
+                                self.update_status = Some(UpdateStatus::transient(format!(
+                                    "checked out {branch} at {worktree_path}"
+                                )));
+                            }
+                            Err(error) => {
+                                self.update_status = Some(UpdateStatus::transient(format!(
+                                    "checked out {branch}, but could not enter {worktree_path}: {error}"
+                                )));
+                            }
+                        }
                     }
                     Ok(output) => {
                         let error = String::from_utf8_lossy(&output.stderr);
@@ -3689,9 +3702,18 @@ impl App {
                     .output()
                 {
                     Ok(output) if output.status.success() => {
-                        self.update_status = Some(UpdateStatus::transient(format!(
-                            "checked out {branch}"
-                        )));
+                        match std::env::set_current_dir(&repo_path) {
+                            Ok(()) => {
+                                self.update_status = Some(UpdateStatus::transient(format!(
+                                    "checked out base branch {branch}"
+                                )));
+                            }
+                            Err(error) => {
+                                self.update_status = Some(UpdateStatus::transient(format!(
+                                    "checked out {branch}, but could not enter {repo_path}: {error}"
+                                )));
+                            }
+                        }
                     }
                     Ok(output) => {
                         let error = String::from_utf8_lossy(&output.stderr);
@@ -4511,6 +4533,7 @@ pub enum Action {
     },
     CheckoutIssueBranch {
         repo_path: String,
+        worktree_path: String,
         branch: String,
     },
     CheckoutIssueBaseBranch {
