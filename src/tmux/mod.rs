@@ -831,6 +831,8 @@ pub struct AvailableTools {
     available: Vec<String>,
 }
 
+static AVAILABLE_TOOLS_CACHE: OnceLock<AvailableTools> = OnceLock::new();
+
 impl AvailableTools {
     pub fn detect() -> Self {
         // Two passes so the whole roster costs at most ONE login shell.
@@ -870,7 +872,19 @@ impl AvailableTools {
             available.extend(custom);
         }
 
-        Self { available }
+        let tools = Self { available };
+        let _ = AVAILABLE_TOOLS_CACHE.set(tools.clone());
+        tools
+    }
+
+    /// Reuse the tool probe performed during TUI startup. Falling back to a
+    /// normal probe keeps non-TUI callers correct while preventing settings
+    /// rendering from launching login shells for individual agents.
+    pub fn cached_or_detect() -> Self {
+        AVAILABLE_TOOLS_CACHE
+            .get()
+            .cloned()
+            .unwrap_or_else(Self::detect)
     }
 
     pub fn any_available(&self) -> bool {
