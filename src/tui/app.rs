@@ -3736,44 +3736,33 @@ impl App {
                 worktree_path,
                 base_branch,
             } => {
-                let fetch = Command::new("git")
-                    .args(["-C", &worktree_path, "fetch", "origin", &base_branch])
-                    .output();
-                match fetch {
+                match Command::new("git")
+                    .args([
+                        "-C",
+                        &worktree_path,
+                        "pull",
+                        "--rebase",
+                        "--autostash",
+                        "origin",
+                        &base_branch,
+                    ])
+                    .output()
+                {
                     Ok(output) if output.status.success() => {
-                        match Command::new("git")
-                            .args(["-C", &worktree_path, "rebase", "FETCH_HEAD"])
-                            .output()
-                        {
-                            Ok(output) if output.status.success() => {
-                                self.update_status = Some(UpdateStatus::transient(format!(
-                                    "rebased issue worktree onto {base_branch}"
-                                )));
-                            }
-                            Ok(output) => {
-                                let error = String::from_utf8_lossy(&output.stderr);
-                                self.update_status = Some(UpdateStatus::transient(format!(
-                                    "rebase onto {base_branch} failed: {}",
-                                    error.lines().next().unwrap_or("resolve conflicts, then continue or abort the rebase")
-                                )));
-                            }
-                            Err(error) => {
-                                self.update_status = Some(UpdateStatus::transient(format!(
-                                    "could not run git rebase: {error}"
-                                )));
-                            }
-                        }
+                        self.update_status = Some(UpdateStatus::transient(format!(
+                            "updated from {base_branch}"
+                        )));
                     }
                     Ok(output) => {
                         let error = String::from_utf8_lossy(&output.stderr);
                         self.update_status = Some(UpdateStatus::transient(format!(
-                            "fetch failed: {}",
-                            error.lines().next().unwrap_or("git fetch failed")
+                            "update from {base_branch} failed: {}",
+                            error.lines().next().unwrap_or("resolve conflicts, then continue or abort the rebase")
                         )));
                     }
                     Err(error) => {
                         self.update_status = Some(UpdateStatus::transient(format!(
-                            "could not run git fetch: {error}"
+                            "could not run git pull: {error}"
                         )));
                     }
                 }
